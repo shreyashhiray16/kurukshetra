@@ -12,14 +12,14 @@ class Settings(BaseSettings):
     
     # API Keys & Webhook Secrets
     GEMINI_API_KEY: str = ""
-    GROQ_API_KEY: str = ""
-    LLM_PROVIDER: str = "auto"
-    # Gemini models
     GEMINI_MODEL: str = "gemini-3.5-flash"
     GEMINI_FALLBACK_MODELS: str = "gemini-3-flash-preview,gemma-4-26b-a4b-it"
-    # Groq models
+    # Groq models and endpoint link
+    GROQ_API_KEY: str = ""
+    GROQ_API_URL: str = "https://api.groq.com/openai/v1/chat/completions"
     GROQ_MODEL: str = "openai/gpt-oss-120b"
     GROQ_FALLBACK_MODELS: str = "qwen/qwen3.8-27b,openai/gpt-oss-20b"
+    LLM_PROVIDER: str = "auto"
     LLM_MAX_RETRIES: int = 1
     GITHUB_TOKEN: str = ""
     GITHUB_WEBHOOK_SECRET: str = "test-webhook-secret-key-12345"

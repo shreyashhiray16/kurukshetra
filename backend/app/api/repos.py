@@ -1,10 +1,12 @@
+import re
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from app.core.db import get_session
-from app.models.entities import Repository, Requirement
+from app.models.entities import Repository, Requirement, Assessment
 from app.schemas.repo import (
     ConnectRepoRequest,
+    ConnectMultiRepoRequest,
     RepoInspectResponse,
     RepoEvidenceResponse,
     EvidenceSnippet
@@ -143,7 +145,76 @@ async def collect_repo_evidence(
         collected_evidences=collected
     )
 
+@router.post("/connect-multi", response_model=List[Repository])
+async def connect_multiple_repositories(
+    payload: Optional[ConnectMultiRepoRequest] = None,
+    raw_text: Optional[str] = Query(None),
+    session: Session = Depends(get_session)
+):
+    """
+    Connect multiple repositories from freeform text, comma/newline/space separated URLs or owner/repo strings.
+    Validates, resolves metadata from GitHub, and returns all successfully connected repositories.
+    """
+    text_to_process = (payload.raw_text if payload and payload.raw_text else raw_text) or ""
+    lines_and_tokens = re.split(r'[\r\n,;]+', text_to_process)
+    saved_repos = []
+    
+    for token in lines_and_tokens:
+        token = token.strip()
+        if not token:
+            continue
+        parsed = parse_github_repo(token)
+        if not parsed:
+            continue
+        owner, repo_name, full_name = parsed
+        
+        repo_details = await GitHubScannerService.get_repo_details(full_name)
+        if repo_details.get("status") == 200 and repo_details.get("full_name"):
+            full_name = repo_details.get("full_name")
+
+        default_branch = repo_details.get("default_branch") if repo_details.get("status") == 200 else "main"
+        sha = await GitHubScannerService.get_latest_commit_sha(full_name, default_branch)
+        clone_url = repo_details.get("clone_url") or f"https://github.com/{full_name}.git"
+
+        existing = session.exec(select(Repository).where(Repository.full_name == full_name)).first()
+        if existing:
+            existing.latest_commit_sha = sha
+            existing.default_branch = default_branch
+            session.add(existing)
+            session.commit()
+            session.refresh(existing)
+            saved_repos.append(existing)
+        else:
+            repo = Repository(
+                full_name=full_name,
+                clone_url=clone_url,
+                default_branch=default_branch,
+                latest_commit_sha=sha
+            )
+            session.add(repo)
+            session.commit()
+            session.refresh(repo)
+            saved_repos.append(repo)
+            
+    # Return fresh list of models
+    return [session.get(Repository, r.id) for r in saved_repos if r and r.id]
+
+@router.delete("/{repo_id}")
+def delete_repository(repo_id: int, session: Session = Depends(get_session)):
+    """Remove a connected repository and its associated assessments."""
+    repo = session.exec(select(Repository).where(Repository.id == repo_id)).first()
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repository not found.")
+    
+    # Delete assessments
+    assessments = session.exec(select(Assessment).where(Assessment.repo_id == repo_id)).all()
+    for a in assessments:
+        session.delete(a)
+    session.delete(repo)
+    session.commit()
+    return {"message": f"Repository '{repo.full_name}' deleted successfully."}
+
 @router.get("/", response_model=List[Repository])
 def list_repositories(session: Session = Depends(get_session)):
-    """List all connected repositories."""
-    return session.exec(select(Repository)).all()
+    """List all connected repositories ordered by connection date."""
+    return session.exec(select(Repository).order_by(Repository.id.desc())).all()

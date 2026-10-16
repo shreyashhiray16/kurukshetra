@@ -19,6 +19,19 @@ class JobImportRequest(BaseModel):
     source_url: Optional[str] = None
     raw_text: Optional[str] = None
 
+class JobFetchUrlRequest(BaseModel):
+    url: str
+    summarize: bool = True
+
+class JobFetchUrlResponse(BaseModel):
+    url: str
+    title: Optional[str] = None
+    company: Optional[str] = None
+    raw_text: str
+    strategy: str
+    summarized: bool = False
+    summary_model: Optional[str] = None
+
 class JobResponse(BaseModel):
     id: int
     title: str

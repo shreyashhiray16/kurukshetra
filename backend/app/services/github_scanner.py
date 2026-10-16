@@ -23,15 +23,16 @@ class GitHubScannerService:
         """Fetch repo details from GitHub (GET /repos/{owner}/{repo}) to verify existence and get default branch."""
         url = f"{cls.BASE_URL}/repos/{owner_repo}"
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
                 resp = await client.get(url, headers=cls._get_headers())
                 if resp.status_code == 200:
                     data = resp.json()
+                    canonical_name = data.get("full_name", owner_repo)
                     return {
                         "status": 200,
                         "default_branch": data.get("default_branch", "main"),
-                        "clone_url": data.get("clone_url", f"https://github.com/{owner_repo}.git"),
-                        "full_name": data.get("full_name", owner_repo)
+                        "clone_url": data.get("clone_url", f"https://github.com/{canonical_name}.git"),
+                        "full_name": canonical_name
                     }
                 elif resp.status_code == 404:
                     return {"status": 404, "error": "Repository not found or is private."}
@@ -45,34 +46,47 @@ class GitHubScannerService:
 
     @classmethod
     async def get_latest_commit_sha(cls, owner_repo: str, branch: str = "main") -> str:
-        """Fetch latest commit SHA for the given repository and branch."""
-        url = f"{cls.BASE_URL}/repos/{owner_repo}/commits/{branch}"
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, headers=cls._get_headers())
-                if resp.status_code == 200:
-                    data = resp.json()
-                    return data.get("sha", "c9f3e8b417a250d4f9b871c890a1b2c3d4e5f678")
-        except Exception as e:
-            print(f"Failed to fetch commit SHA from GitHub: {e}")
+        """Fetch latest commit SHA for the given repository and branch (falls back to HEAD or master/main)."""
+        branches_to_try = [branch, "HEAD"]
+        if branch not in ("main", "master"):
+            branches_to_try.extend(["main", "master"])
+        
+        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+            for b in branches_to_try:
+                url = f"{cls.BASE_URL}/repos/{owner_repo}/commits/{b}"
+                try:
+                    resp = await client.get(url, headers=cls._get_headers())
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        sha = data.get("sha")
+                        if sha:
+                            return sha
+                except Exception as e:
+                    print(f"Error fetching commit for {owner_repo} @ {b}: {e}")
 
         # Fallback SHA for local testing or mock repos
         return "c9f3e8b417a250d4f9b871c890a1b2c3d4e5f678"
 
     @classmethod
     async def get_repo_tree(cls, owner_repo: str, commit_sha: str) -> List[Dict[str, str]]:
-        """Fetch git tree recursively for a given commit SHA."""
-        url = f"{cls.BASE_URL}/repos/{owner_repo}/git/trees/{commit_sha}?recursive=1"
-        try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(url, headers=cls._get_headers())
-                if resp.status_code == 200:
-                    tree_data = resp.json().get("tree", [])
-                    return [item for item in tree_data if item.get("type") == "blob"]
-        except Exception as e:
-            print(f"Failed to fetch tree from GitHub: {e}")
+        """Fetch git tree recursively for a given commit SHA or branch."""
+        # Try target commit SHA or fallback targets
+        targets = [commit_sha, "HEAD"] if commit_sha and commit_sha != "HEAD" else ["HEAD", "main", "master"]
+        
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            for target in targets:
+                url = f"{cls.BASE_URL}/repos/{owner_repo}/git/trees/{target}?recursive=1"
+                try:
+                    resp = await client.get(url, headers=cls._get_headers())
+                    if resp.status_code == 200:
+                        tree_data = resp.json().get("tree", [])
+                        blobs = [item for item in tree_data if item.get("type") == "blob"]
+                        if blobs:
+                            return blobs
+                except Exception as e:
+                    print(f"Failed to fetch tree from GitHub for {owner_repo} @ {target}: {e}")
 
-        # Fallback tree for testing without live GitHub API token or network limits
+        # Fallback tree for offline testing without live GitHub API token or network limits
         return [
             {"path": "backend/app/main.py", "type": "blob", "size": 1500},
             {"path": "backend/app/core/db.py", "type": "blob", "size": 800},
@@ -87,15 +101,19 @@ class GitHubScannerService:
     @classmethod
     async def fetch_file_content(cls, owner_repo: str, file_path: str, commit_sha: str) -> Optional[str]:
         """Fetch raw content of a specific file at commit SHA, with fast local fallback."""
-        # 1. Real GitHub content first (never substitute local files for a reachable repo)
-        raw_url = f"https://raw.githubusercontent.com/{owner_repo}/{commit_sha}/{file_path}"
-        try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                resp = await client.get(raw_url)
-                if resp.status_code == 200:
-                    return resp.text
-        except Exception:
-            pass
+        # 1. Real GitHub content first (try commit_sha, then HEAD, then default branches)
+        ref_candidates = [commit_sha] if commit_sha and commit_sha != "HEAD" else []
+        ref_candidates.extend(["HEAD", "main", "master"])
+
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+            for ref in ref_candidates:
+                raw_url = f"https://raw.githubusercontent.com/{owner_repo}/{ref}/{file_path}"
+                try:
+                    resp = await client.get(raw_url)
+                    if resp.status_code == 200:
+                        return resp.text
+                except Exception:
+                    pass
 
         # Local candidates (offline fallback only)
         candidates = [

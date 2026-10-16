@@ -3,6 +3,7 @@
 GoogleProvider calls Gemini with model fallback + retry so real LLM responses
 are returned even when one model is retired or overloaded.
 """
+import re
 import json
 import logging
 import time
@@ -122,21 +123,27 @@ class GroqProvider(AssessmentProvider):
                     }
                     with httpx.Client(timeout=35.0) as client:
                         resp = client.post(
-                            "https://api.groq.com/openai/v1/chat/completions",
+                            settings.GROQ_API_URL,
                             headers=headers,
                             json=payload,
                         )
                     if resp.status_code == 200:
                         data_json = resp.json()
                         raw_content = data_json["choices"][0]["message"]["content"]
-                        # Strip accidental markdown code blocks if any
                         clean_content = raw_content.strip()
                         if clean_content.startswith("```"):
-                            clean_content = clean_content.split("\n", 1)[-1]
-                            if clean_content.endswith("```"):
-                                clean_content = clean_content.rsplit("```", 1)[0]
-                            clean_content = clean_content.strip()
-                        parsed = json.loads(clean_content)
+                            clean_content = re.sub(r"^```[a-zA-Z]*\n?", "", clean_content)
+                            clean_content = re.sub(r"```$", "", clean_content).strip()
+                        
+                        try:
+                            parsed = json.loads(clean_content)
+                        except json.JSONDecodeError:
+                            # Search for outermost JSON object { ... }
+                            match = re.search(r"\{[\s\S]*\}", clean_content)
+                            if match:
+                                parsed = json.loads(match.group(0))
+                            else:
+                                raise
                         return LLMResult(data=parsed, model=model)
                     last_err = f"{model} status {resp.status_code}: {resp.text[:200]}"
                     if resp.status_code in (429, 503):

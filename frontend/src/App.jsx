@@ -18,7 +18,11 @@ import {
   ChevronRight,
   Code,
   Key,
-  Sparkles
+  Sparkles,
+  Globe,
+  Loader2,
+  Trash2,
+  Plus
 } from 'lucide-react';
 
 import RepoCombobox from './components/RepoCombobox.jsx';
@@ -36,6 +40,8 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [llmTest, setLlmTest] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [multiRepoInput, setMultiRepoInput] = useState("");
+  const [multiRepoLoading, setMultiRepoLoading] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const page = ({
@@ -63,9 +69,51 @@ Responsibilities:
 - Package container images with Docker and orchestrate workloads.
 - Write robust integration test suites and CI pipelines.`);
   const [sourceUrl, setSourceUrl] = useState("https://example.com/careers/staff-ai-engineer");
+  const [fetchingUrl, setFetchingUrl] = useState(false);
   const [newRepoFullName, setNewRepoFullName] = useState("tiangolo/fastapi");
 
   const [feedback, setFeedback] = useState(null); // { type: 'success' | 'error', message: string }
+
+  async function handleFetchJobFromUrl(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    const url = (sourceUrl || '').trim();
+    if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+      setFeedback({ type: 'error', message: "Please enter a valid HTTP or HTTPS job URL (e.g. from Greenhouse, Lever, Workday, LinkedIn, or any company careers page)." });
+      return;
+    }
+
+    try {
+      setFetchingUrl(true);
+      setError(null);
+      setFeedback(null);
+      const res = await fetch(`${API_BASE}/jobs/fetch-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, summarize: true })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || "Failed to fetch job content from URL.");
+      }
+
+      if (data.raw_text) {
+        setRawJobText(data.raw_text);
+        const titleStr = data.title ? ` "${data.title}"` : '';
+        const companyStr = data.company ? ` at ${data.company}` : '';
+        const summaryBadge = data.summarized ? ` (Cleaned & Summarized by Groq ${data.summary_model || ''})` : '';
+        setFeedback({ 
+          type: 'success', 
+          message: `Fetched job description${titleStr}${companyStr}${summaryBadge} via ${data.strategy} (${data.raw_text.length} chars). Only important necessary requirements are displayed below.` 
+        });
+      } else {
+        throw new Error("No readable job text could be found at this URL.");
+      }
+    } catch (err) {
+      setFeedback({ type: 'error', message: `URL Fetch failed: ${err.message}` });
+    } finally {
+      setFetchingUrl(false);
+    }
+  }
 
   useEffect(() => {
     loadInitialData();
@@ -138,7 +186,7 @@ Responsibilities:
   async function handleConnectRepo(e) {
     if (e && e.preventDefault) e.preventDefault();
     if (!newRepoFullName.trim()) {
-      setFeedback({ type: 'error', message: "Please provide a valid repository name in 'owner/repo' format." });
+      setFeedback({ type: 'error', message: "Please provide a valid repository name in 'owner/repo' format or full GitHub URL." });
       return;
     }
     try {
@@ -151,15 +199,79 @@ Responsibilities:
         body: JSON.stringify({ full_name: newRepoFullName.trim() })
       });
       if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(errText);
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || await res.text());
       }
       const data = await res.json();
       setRepos(prev => [data, ...prev.filter(r => r.id !== data.id)]);
       setSelectedRepo(data);
-      setFeedback({ type: 'success', message: `Repository connected successfully: ${data.full_name} (Commit: ${data.latest_commit_sha ? data.latest_commit_sha.slice(0, 8) : 'HEAD'})` });
+      setNewRepoFullName("");
+      setFeedback({ type: 'success', message: `Repository connected: ${data.full_name} (${data.default_branch}) - SHA: ${data.latest_commit_sha ? data.latest_commit_sha.slice(0, 8) : 'HEAD'}` });
     } catch (err) {
       setFeedback({ type: 'error', message: `Error connecting repository: ${err.message}` });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleConnectMultiRepos(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    const raw = (multiRepoInput || "").trim();
+    if (!raw) {
+      setFeedback({ type: 'error', message: "Please enter at least one GitHub repository link or owner/repo format." });
+      return;
+    }
+    try {
+      setMultiRepoLoading(true);
+      setError(null);
+      setFeedback(null);
+      const res = await fetch(`${API_BASE}/repos/connect-multi`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ raw_text: raw })
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || "Failed to batch connect repositories.");
+      }
+      const connectedList = await res.json();
+      if (!connectedList || connectedList.length === 0) {
+        throw new Error("No valid GitHub repositories found in the input. Please enter valid URLs or owner/repo strings.");
+      }
+      // Update repos
+      setRepos(prev => {
+        const ids = new Set(connectedList.map(c => c.id));
+        return [...connectedList, ...prev.filter(r => !ids.has(r.id))];
+      });
+      setSelectedRepo(connectedList[0]);
+      setMultiRepoInput("");
+      setFeedback({
+        type: 'success',
+        message: `Successfully connected ${connectedList.length} repositories! Selected "${connectedList[0].full_name}" for evaluation.`
+      });
+    } catch (err) {
+      setFeedback({ type: 'error', message: `Multi-Repo connection error: ${err.message}` });
+    } finally {
+      setMultiRepoLoading(false);
+    }
+  }
+
+  async function handleDeleteRepo(repoId) {
+    if (!window.confirm("Are you sure you want to remove this connected repository?")) return;
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE}/repos/${repoId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete repository.");
+      setRepos(prev => {
+        const next = prev.filter(r => r.id !== repoId);
+        if (selectedRepo && selectedRepo.id === repoId) {
+          setSelectedRepo(next[0] || null);
+        }
+        return next;
+      });
+      setFeedback({ type: 'success', message: "Repository removed." });
+    } catch (err) {
+      setFeedback({ type: 'error', message: `Delete failed: ${err.message}` });
     } finally {
       setLoading(false);
     }
@@ -617,24 +729,66 @@ Responsibilities:
               </h3>
               <form onSubmit={handleImportJob}>
                 <div style={{ marginBottom: 16 }}>
-                  <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 6 }}>
-                    Job Source URL (Optional)
-                  </label>
-                  <input 
-                    id="job-source-url-input"
-                    type="url" 
-                    value={sourceUrl} 
-                    onChange={e => setSourceUrl(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '9px 12px',
-                      background: 'var(--bg-secondary)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: 'var(--radius-sm)',
-                      color: 'var(--text-main)',
-                      fontSize: '0.9rem'
-                    }}
-                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <label style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                      Job Source URL (Any Company Careers / ATS URL)
+                    </label>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>
+                      Supports Greenhouse, Lever, Workday, LinkedIn & any careers page
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input 
+                      id="job-source-url-input"
+                      type="url" 
+                      placeholder="e.g. https://jobs.lever.co/spotify/... or https://job-boards.greenhouse.io/stripe/jobs/..."
+                      value={sourceUrl} 
+                      onChange={e => setSourceUrl(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleFetchJobFromUrl();
+                        }
+                      }}
+                      style={{
+                        flex: 1,
+                        padding: '9px 12px',
+                        background: 'var(--bg-secondary)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-sm)',
+                        color: 'var(--text-main)',
+                        fontSize: '0.9rem'
+                      }}
+                    />
+                    <button
+                      id="fetch-job-url-btn"
+                      type="button"
+                      onClick={handleFetchJobFromUrl}
+                      disabled={fetchingUrl || loading || !sourceUrl.trim()}
+                      className="btn"
+                      style={{
+                        background: 'var(--accent-primary)',
+                        color: '#fff',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        whiteSpace: 'nowrap',
+                        padding: '0 16px',
+                        fontWeight: 600
+                      }}
+                      title="Fetch complete job description text directly from this URL"
+                    >
+                      {fetchingUrl ? (
+                        <>
+                          <Loader2 size={15} className="spin" /> Fetching...
+                        </>
+                      ) : (
+                        <>
+                          <Globe size={15} /> Fetch from URL
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
                 <div style={{ marginBottom: 18 }}>
                   <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 6 }}>
@@ -669,19 +823,21 @@ Responsibilities:
               <h3 style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <GitBranch size={20} color="var(--accent-primary)" /> Connect GitHub Repository
               </h3>
-              <form onSubmit={handleConnectRepo}>
-                <div style={{ marginBottom: 18 }}>
-                  <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 6 }}>
-                    Repository Full Name (owner/repo)
-                  </label>
+
+              {/* Single Repo Quick Connect */}
+              <form onSubmit={handleConnectRepo} style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 6 }}>
+                  Quick Connect (owner/repo or GitHub URL)
+                </label>
+                <div style={{ display: 'flex', gap: 8 }}>
                   <input 
                     id="repo-name-input"
                     type="text" 
-                    placeholder="octocat/Hello-World"
+                    placeholder="e.g. tiangolo/fastapi or https://github.com/..."
                     value={newRepoFullName} 
                     onChange={e => setNewRepoFullName(e.target.value)}
                     style={{
-                      width: '100%',
+                      flex: 1,
                       padding: '9px 12px',
                       background: 'var(--bg-secondary)',
                       border: '1px solid var(--border-subtle)',
@@ -690,47 +846,175 @@ Responsibilities:
                       fontSize: '0.9rem'
                     }}
                   />
+                  <button id="submit-connect-repo-btn" type="submit" disabled={loading || !newRepoFullName.trim()} className="btn btn-primary" style={{ whiteSpace: 'nowrap' }}>
+                    <ShieldCheck size={16} /> Connect & Scan
+                  </button>
                 </div>
-                <button id="submit-connect-repo-btn" type="submit" disabled={loading} className="btn btn-primary" style={{ width: '100%', marginBottom: 20 }}>
-                  <ShieldCheck size={16} /> Connect & Scan Repository Tree
-                </button>
               </form>
 
+              {/* Multiple Repositories Batch Connect */}
+              <div style={{ background: 'rgba(225, 29, 72, 0.03)', border: '1px dashed var(--accent-primary)', borderRadius: 'var(--radius-md)', padding: 16, marginBottom: 20 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontWeight: 600, fontSize: '0.9rem' }}>
+                  <Plus size={16} color="var(--accent-primary)" /> Add Multiple GitHub Repositories
+                </div>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 10 }}>
+                  Paste multiple repository links or names separated by commas or new lines. We will scan all of them:
+                </p>
+                <textarea
+                  id="multi-repo-input"
+                  rows={3}
+                  placeholder={`https://github.com/user/portfolio-api\nhttps://github.com/user/machine-learning\noctocat/Hello-World`}
+                  value={multiRepoInput}
+                  onChange={e => setMultiRepoInput(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: 'var(--text-main)',
+                    fontSize: '0.85rem',
+                    fontFamily: 'inherit',
+                    marginBottom: 10
+                  }}
+                />
+                <button
+                  id="submit-multi-repo-btn"
+                  type="button"
+                  onClick={handleConnectMultiRepos}
+                  disabled={multiRepoLoading || !multiRepoInput.trim()}
+                  className="btn"
+                  style={{
+                    background: 'var(--accent-primary)',
+                    color: '#fff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontSize: '0.85rem',
+                    fontWeight: 600
+                  }}
+                >
+                  {multiRepoLoading ? <Loader2 size={15} className="spin" /> : <ShieldCheck size={15} />}
+                  Connect All Repositories
+                </button>
+              </div>
+
               <h4 style={{ fontSize: '0.9rem', marginBottom: 10, color: 'var(--text-muted)' }}>Connected Repositories ({repos.length})</h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
                 {repos.map(r => (
                   <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
                     <div>
-                      <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{r.full_name}</div>
+                      <div style={{ fontWeight: 600, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {r.full_name}
+                        {selectedRepo?.id === r.id && <span className="badge badge-cyan" style={{ fontSize: '0.7rem' }}>Selected</span>}
+                      </div>
                       <div className="mono" style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
-                        SHA: {r.latest_commit_sha ? r.latest_commit_sha.slice(0, 10) : 'HEAD'}
+                        Branch: {r.default_branch || 'main'} · SHA: {r.latest_commit_sha ? r.latest_commit_sha.slice(0, 10) : 'HEAD'}
                       </div>
                     </div>
-                    <span className="badge badge-met">Active</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedRepo(r); navigate('/'); }}
+                        className="btn btn-secondary"
+                        style={{ padding: '4px 10px', fontSize: '0.8rem' }}
+                      >
+                        Assess
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteRepo(r.id)}
+                        className="btn"
+                        title="Remove repository"
+                        style={{ background: 'transparent', color: 'var(--text-muted)', border: 'none', padding: '6px', cursor: 'pointer' }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </div>
                 ))}
+                {repos.length === 0 && (
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: 12, textAlign: 'center' }}>
+                    No repositories connected yet.
+                  </div>
+                )}
               </div>
             </div>
           </div>
         )}
 
-        {/* TAB 3: WEBHOOK EVENTS */}
+        {/* TAB 3: REPOSITORIES VIEW */}
         {page === 'repos' && (
-          <div className="animate-fade-in">
-            <div className="glass-panel" style={{ padding: 24, maxWidth: 720 }}>
+          <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <div className="glass-panel" style={{ padding: 24, maxWidth: 840 }}>
               <h3 style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <GitBranch size={20} color="var(--accent-primary)" /> Connect GitHub Repository
+                <GitBranch size={20} color="var(--accent-primary)" /> Connect Multiple GitHub Repositories
               </h3>
-              <form onSubmit={handleConnectRepo}>
-                <input id="repo-name-input" type="text" placeholder="octocat/Hello-World" value={newRepoFullName} onChange={e => setNewRepoFullName(e.target.value)}
-                  style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', marginBottom: 14 }} />
-                <button id="submit-connect-repo-btn" type="submit" disabled={loading} className="btn btn-primary"><ShieldCheck size={16} /> Connect & Scan</button>
-              </form>
-              <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+              <div style={{ marginBottom: 18 }}>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 6 }}>
+                  Repository Links / Names (Insert single or multiple links)
+                </label>
+                <textarea
+                  id="tab-multi-repo-input"
+                  rows={4}
+                  placeholder={`https://github.com/tiangolo/fastapi\nhttps://github.com/pallets/flask\noctocat/Hello-World`}
+                  value={multiRepoInput}
+                  onChange={e => setMultiRepoInput(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-sm)',
+                    marginBottom: 12,
+                    fontSize: '0.9rem',
+                    fontFamily: 'inherit'
+                  }}
+                />
+                <button
+                  id="submit-tab-multi-repo-btn"
+                  type="button"
+                  onClick={handleConnectMultiRepos}
+                  disabled={multiRepoLoading || !multiRepoInput.trim()}
+                  className="btn btn-primary"
+                >
+                  {multiRepoLoading ? <Loader2 size={16} className="spin" /> : <ShieldCheck size={16} />}
+                  Connect & Scan Repositories
+                </button>
+              </div>
+
+              <h4 style={{ fontSize: '0.95rem', margin: '20px 0 10px', color: 'var(--text-muted)' }}>
+                Active Connected Repositories ({repos.length})
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {repos.map(r => (
-                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8 }}>
-                    <div><strong>{r.full_name}</strong><div className="mono" style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>{r.latest_commit_sha ? r.latest_commit_sha.slice(0, 10) : 'HEAD'}</div></div>
-                    <span className="badge badge-met">Tracked</span>
+                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-subtle)' }}>
+                    <div>
+                      <strong style={{ fontSize: '0.95rem' }}>{r.full_name}</strong>
+                      <div className="mono" style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginTop: 2 }}>
+                        Branch: {r.default_branch || 'main'} · Commit: {r.latest_commit_sha ? r.latest_commit_sha.slice(0, 10) : 'HEAD'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedRepo(r); navigate('/'); }}
+                        className="btn btn-primary"
+                        style={{ padding: '6px 12px', fontSize: '0.82rem' }}
+                      >
+                        Select & Assess
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteRepo(r.id)}
+                        className="btn"
+                        title="Remove repository"
+                        style={{ background: 'transparent', color: 'var(--status-unmet)', border: 'none', padding: '6px', cursor: 'pointer' }}
+                      >
+                        <Trash2 size={17} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

@@ -7,6 +7,10 @@ class ConnectRepoRequest(BaseModel):
     clone_url: Optional[str] = None
     default_branch: Optional[str] = "main"
 
+class ConnectMultiRepoRequest(BaseModel):
+    raw_text: str  # Multiple repos separated by commas, newlines, etc.
+
+
 class EvidenceSnippet(BaseModel):
     file_path: str
     start_line: int
