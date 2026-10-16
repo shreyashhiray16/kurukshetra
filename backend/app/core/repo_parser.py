@@ -20,6 +20,11 @@ def parse_github_repo(input_str: Optional[str]) -> Optional[Tuple[str, str, str]
     if not raw:
         return None
 
+    # Strip decorator suffix if present (e.g. " (main) - SHA: 1234567")
+    raw = re.sub(r"\s*\([^)]*\)\s*-\s*SHA:.*$", "", raw, flags=re.IGNORECASE).strip()
+    if not raw:
+        return None
+
     # SSH format: git@github.com:owner/repo(.git)?
     ssh_match = re.match(r"^git@github\.com:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?$", raw, re.IGNORECASE)
     if ssh_match:

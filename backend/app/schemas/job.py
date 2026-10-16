@@ -13,6 +13,7 @@ class ExtractedRequirement(BaseModel):
 class JobExtractionResult(BaseModel):
     title: str
     company: Optional[str] = None
+    role_profile: Optional[dict] = None
     requirements: List[ExtractedRequirement]
 
 class JobImportRequest(BaseModel):
@@ -25,6 +26,7 @@ class JobResponse(BaseModel):
     company: Optional[str] = None
     source_url: Optional[str] = None
     raw_text: str
+    role_profile: Optional[dict] = None
     created_at: datetime
     requirements: List[dict]
     extraction_source: Optional[str] = None

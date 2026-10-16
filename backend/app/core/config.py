@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     LLM_MAX_RETRIES: int = 1
     GITHUB_TOKEN: str = ""
     GITHUB_WEBHOOK_SECRET: str = "test-webhook-secret-key-12345"
+    YOUTUBE_API_KEY: str = ""
     
     # CORS
     CORS_ORIGINS: list[str] = [

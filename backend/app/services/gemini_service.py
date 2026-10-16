@@ -26,6 +26,124 @@ class GeminiService:
     )
 
     @classmethod
+    async def expand_requirements_aliases(
+        cls,
+        requirements: List[Dict[str, Any]]
+    ) -> Dict[str, List[str]]:
+        """
+        Ask LLM ONCE per job to expand requirements into aliases/synonyms/imports/package names/file patterns.
+        Cached on Requirement entity.
+        """
+        provider = get_provider()
+        req_list = [{"title": sanitize(r["title"], 100), "category": sanitize(r.get("category", ""), 50)} for r in requirements]
+
+        prompt = f"""{cls.SYSTEM}
+Expand each technical requirement into a list of 4-8 code-level search tokens (aliases, import statements, package names, keywords, decorator names, or file patterns).
+For example:
+"async APIs" -> ["async def", "asyncio", "await", "httpx.AsyncClient", "anyio"]
+"FastAPI" -> ["FastAPI", "APIRouter", "Depends", "fastapi"]
+"Docker" -> ["Dockerfile", "docker-compose", "container", "ENTRYPOINT"]
+"RAG" -> ["embedding", "vector", "faiss", "chroma", "pgvector", "retriever"]
+
+Requirements: <DATA>{json.dumps(req_list)}</DATA>
+
+Return JSON: {{"expansions": [{{"title": "string matching input requirement", "tokens": ["token1", "token2"]}}]}}"""
+
+        res = provider.generate_json(prompt)
+        expansions_map: Dict[str, List[str]] = {}
+        if res.data and "expansions" in res.data:
+            for item in res.data["expansions"]:
+                title = item.get("title", "")
+                tokens = [sanitize(str(t), 50) for t in item.get("tokens", []) if str(t).strip()]
+                if title:
+                    expansions_map[title] = tokens
+
+        # Fallback expansion for any missing
+        for r in requirements:
+            t = r["title"]
+            if t not in expansions_map or not expansions_map[t]:
+                clean_words = re.findall(r'[A-Za-z0-9+#]+', t)
+                expansions_map[t] = list(set([t] + clean_words))
+
+        return expansions_map
+
+    @classmethod
+    async def evaluate_all_skills_batched(
+        cls,
+        role_profile: Dict[str, Any],
+        skill_payloads: List[Dict[str, Any]],
+        repo_name: str
+    ) -> Dict[str, Any]:
+        """
+        Make ONE batched LLM call for all skills to stay within free-tier limits.
+        Evaluates depth expectations based on role seniority (intern/junior/mid/senior/lead).
+        """
+        provider = get_provider()
+        clean_skills = []
+        for sp in skill_payloads:
+            clean_skills.append({
+                "requirement_id": sp["requirement_id"],
+                "requirement_title": sanitize(sp["requirement_title"], 100),
+                "category": sanitize(sp.get("category", ""), 50),
+                "requirement_type": sp.get("requirement_type", "required"),
+                "job_excerpt": sanitize(sp.get("job_source_snippet", ""), 300),
+                "code_snippets": [
+                    {"id": i, "file": c["file"], "lines": c["lines"], "code": sanitize(c["code"], 400)}
+                    for i, c in enumerate(sp.get("code_snippets", []))
+                ],
+                "doc_dep_snippets": [
+                    {"id": i, "file": d["file"], "lines": d["lines"], "text": sanitize(d["text"], 200)}
+                    for i, d in enumerate(sp.get("doc_dep_snippets", []))
+                ]
+            })
+
+        seniority = role_profile.get("seniority", "mid")
+        expected_depth = role_profile.get("expected_depth", "standard implementation")
+
+        prompt = f"""{cls.SYSTEM}
+Target Role Seniority: {seniority}
+Domain: {role_profile.get('domain', 'general')}
+Role Depth Expectations: {expected_depth}
+Repository: {sanitize(repo_name, 100)}
+
+INVARIANTS & EVALUATION RULES:
+1. Seniority depth rule: A "senior" or "lead" requirement requires robust code evidence (error handling, testing, modular design patterns, architectural separation), not just a 1-line script or trivial import. If only trivial usage exists for a senior role, mark "partial". For junior/intern, working basic usage can be "met".
+2. "met": Substantive working executable code demonstrating the required depth.
+3. "partial": Minimal code, shallow usage, or declared in README/dependency manifest only.
+4. "unmet": No evidence in repo files. "unmet" means not found in this repository snapshot, NOT that the person lacks the skill.
+5. cited_code_ids: list of indices from each skill's executable code snippets list.
+6. Provide a concise plain-English "practice_task" tied to this repository structure (e.g. "Add an async endpoint with pytest test suite to app/api/...").
+7. Also provide an overall "rationale" summarizing candidate readiness for this specific {seniority} role.
+
+Skills to Evaluate: <DATA>{json.dumps(clean_skills, indent=1)}</DATA>
+
+Return JSON:
+{{
+  "rationale": "plain-English overall readiness rationale for this role",
+  "evaluations": [
+    {{
+      "requirement_id": int,
+      "status": "met|partial|unmet",
+      "confidence_score": 0.0-1.0,
+      "reason": "specific explanation",
+      "limitations": ["string"],
+      "next_step": "string or null",
+      "practice_task": "concrete repo task or null",
+      "cited_code_ids": [0]
+    }}
+  ]
+}}"""
+
+        result = provider.generate_json(prompt)
+        if result.error or not result.data:
+            logger.warning("Batched Gemini evaluation failed: %s", result.error)
+            return {"error": result.error}
+        
+        data = result.data
+        data["model"] = result.model
+        return data
+
+    @classmethod
     async def evaluate_skill_with_llm(
         cls,
         requirement_title: str,

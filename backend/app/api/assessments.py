@@ -10,10 +10,15 @@ from app.schemas.assessment import (
     AssessmentResponse,
     AssessmentSummary,
     SkillAssessmentResult,
-    CitationItem
+    CitationItem,
+    ReadinessPrediction,
+    LearningResource
 )
 from app.services.github_scanner import GitHubScannerService
 from app.services.assessment_engine import AssessmentEngineService
+from app.services.readiness_calculator import ReadinessCalculator
+from app.services.resource_finder import ResourceFinderService
+from app.services.roadmap_generator import RoadmapGenerator
 
 router = APIRouter()
 
@@ -22,9 +27,10 @@ async def run_assessment(payload: AssessmentRunRequest, session: Session = Depen
     """
     Run an end-to-end skill assessment and gap analysis for a Job and connected Repository:
     1. Fetches job requirements and repo file tree.
-    2. Runs deterministic evidence extraction and citation validation.
-    3. Persists Assessment, Citation, and AuditHistory records.
-    4. Computes weighted match score and actionable next steps for skill gaps.
+    2. Runs multi-signal alias retrieval and batched role-aware LLM evaluation.
+    3. Finds verified learning resources (YouTube + official docs) for every gap.
+    4. Computes deterministic, explainable readiness prediction with top drivers, blockers, and what-if.
+    5. Persists Assessment, Citation, and AuditHistory records.
     """
     job = session.exec(select(Job).where(Job.id == payload.job_id)).first()
     if not job:
@@ -43,28 +49,40 @@ async def run_assessment(payload: AssessmentRunRequest, session: Session = Depen
     tree_paths = [item["path"] for item in tree]
     content_cache: dict = {}
 
-    skill_results: List[SkillAssessmentResult] = []
+    # Run batched, role-aware evaluation
+    eval_pack = await AssessmentEngineService.evaluate_all_requirements(
+        job=job,
+        requirements=requirements,
+        repo=repo,
+        tree_paths=tree_paths,
+        content_cache=content_cache,
+        session=session
+    )
+    skill_results: List[SkillAssessmentResult] = eval_pack["skill_results"]
+    llm_rationale: Optional[str] = eval_pack.get("llm_rationale")
 
-    for req in requirements:
-        eval_result = await AssessmentEngineService.evaluate_requirement(req, repo, tree_paths, content_cache)
-        skill_results.append(eval_result)
-
+    for eval_result in skill_results:
         # Check existing assessment record for this requirement and repo
         existing_assessment = session.exec(
             select(Assessment).where(
-                Assessment.requirement_id == req.id,
+                Assessment.requirement_id == eval_result.requirement_id,
                 Assessment.repo_id == repo.id
             )
         ).first()
 
         prev_status = existing_assessment.status.value if existing_assessment else None
 
+        # Build raw response payload including resources and practice task
+        persisted_response = dict(eval_result.llm_response or {})
+        persisted_response["practice_task"] = eval_result.practice_task
+        persisted_response["resources"] = [r.model_dump(mode="json") for r in eval_result.resources]
+
         if existing_assessment:
             existing_assessment.status = eval_result.status
             existing_assessment.confidence_score = eval_result.confidence_score
             existing_assessment.reason = eval_result.reason
             existing_assessment.llm_model = eval_result.llm_model
-            existing_assessment.llm_raw_response = json.dumps(eval_result.llm_response) if eval_result.llm_response else None
+            existing_assessment.llm_raw_response = json.dumps(persisted_response)
             existing_assessment.evaluated_at = datetime.now(timezone.utc)
             session.add(existing_assessment)
             session.flush()
@@ -76,13 +94,13 @@ async def run_assessment(payload: AssessmentRunRequest, session: Session = Depen
                 session.delete(old_c)
         else:
             assessment_record = Assessment(
-                requirement_id=req.id,
+                requirement_id=eval_result.requirement_id,
                 repo_id=repo.id,
                 status=eval_result.status,
                 confidence_score=eval_result.confidence_score,
                 reason=eval_result.reason,
                 llm_model=eval_result.llm_model,
-                llm_raw_response=json.dumps(eval_result.llm_response) if eval_result.llm_response else None,
+                llm_raw_response=json.dumps(persisted_response),
             )
             session.add(assessment_record)
             session.flush()
@@ -103,7 +121,7 @@ async def run_assessment(payload: AssessmentRunRequest, session: Session = Depen
         # Record audit history on status changes
         if prev_status != eval_result.status.value:
             audit = AuditHistory(
-                requirement_id=req.id,
+                requirement_id=eval_result.requirement_id,
                 previous_status=prev_status,
                 new_status=eval_result.status.value,
                 trigger_event="manual_assessment_run",
@@ -113,7 +131,35 @@ async def run_assessment(payload: AssessmentRunRequest, session: Session = Depen
 
     session.commit()
 
+    # Determine seniority and repo signals for readiness calculation
+    role_prof = {}
+    if job.role_profile:
+        try:
+            role_prof = json.loads(job.role_profile)
+        except Exception:
+            pass
+    seniority = role_prof.get("seniority", "mid")
+
+    repo_signals = {
+        "has_tests": any("test" in p.lower() for p in tree_paths),
+        "has_ci": any(".github/workflows" in p or "ci" in p.lower() for p in tree_paths),
+        "is_tiny_repo": len(tree_paths) < 4
+    }
+
+    readiness = ReadinessCalculator.calculate(
+        skills=skill_results,
+        seniority=seniority,
+        repo_signals=repo_signals,
+        llm_rationale=llm_rationale
+    )
+
     summary = AssessmentEngineService.calculate_summary(skill_results)
+
+    roadmap = RoadmapGenerator.generate_15_day_roadmap(
+        target_role=job.title,
+        target_repo=repo.full_name,
+        skills=skill_results
+    )
 
     return AssessmentResponse(
         job_id=job.id,
@@ -122,6 +168,8 @@ async def run_assessment(payload: AssessmentRunRequest, session: Session = Depen
         repo_full_name=repo.full_name,
         evaluated_at=datetime.now(timezone.utc),
         summary=summary,
+        readiness=readiness,
+        roadmap=roadmap,
         skill_assessments=skill_results
     )
 
@@ -131,6 +179,14 @@ def get_assessments_for_job(job_id: int, session: Session = Depends(get_session)
     job = session.exec(select(Job).where(Job.id == job_id)).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
+
+    role_prof = {}
+    if job.role_profile:
+        try:
+            role_prof = json.loads(job.role_profile)
+        except Exception:
+            pass
+    seniority = role_prof.get("seniority", "mid")
 
     repos = session.exec(select(Repository)).all()
     results = []
@@ -157,6 +213,20 @@ def get_assessments_for_job(job_id: int, session: Session = Depends(get_session)
                         github_url=c.github_url
                     ) for c in a.citations
                 ]
+
+                # Extract persisted resources and practice task from llm_raw_response
+                res_items = []
+                practice_task = None
+                parsed_resp = None
+                if a.llm_raw_response:
+                    try:
+                        parsed_resp = json.loads(a.llm_raw_response)
+                        practice_task = parsed_resp.get("practice_task")
+                        for r_dict in parsed_resp.get("resources", []):
+                            res_items.append(LearningResource(**r_dict))
+                    except Exception:
+                        pass
+
                 skill_results.append(
                     SkillAssessmentResult(
                         requirement_id=req.id,
@@ -171,13 +241,26 @@ def get_assessments_for_job(job_id: int, session: Session = Depends(get_session)
                         limitations=[],
                         next_step=None,
                         citations=citations,
+                        resources=res_items,
+                        practice_task=practice_task,
                         llm_used=bool(a.llm_model),
                         llm_model=a.llm_model,
-                        llm_response=json.loads(a.llm_raw_response) if a.llm_raw_response else None,
+                        llm_response=parsed_resp,
                     )
                 )
 
             summary = AssessmentEngineService.calculate_summary(skill_results)
+            readiness = ReadinessCalculator.calculate(
+                skills=skill_results,
+                seniority=seniority
+            )
+
+            roadmap = RoadmapGenerator.generate_15_day_roadmap(
+                target_role=job.title,
+                target_repo=repo.full_name,
+                skills=skill_results
+            )
+
             results.append(
                 AssessmentResponse(
                     job_id=job.id,
@@ -186,6 +269,8 @@ def get_assessments_for_job(job_id: int, session: Session = Depends(get_session)
                     repo_full_name=repo.full_name,
                     evaluated_at=assessments[0].evaluated_at,
                     summary=summary,
+                    readiness=readiness,
+                    roadmap=roadmap,
                     skill_assessments=skill_results
                 )
             )
@@ -208,7 +293,6 @@ def assessment_history(session: Session = Depends(get_session)):
         }
         for r in rows
     ]
-
 
 @router.get("/audit/{requirement_id}", response_model=List[AuditHistory])
 def get_audit_history(requirement_id: int, session: Session = Depends(get_session)):

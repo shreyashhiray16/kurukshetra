@@ -21,7 +21,11 @@ const REPO_NAME_REGEX = /^[A-Za-z0-9_.-]+$/;
 
 export function parseGithubRepo(input) {
   if (typeof input !== 'string') return null;
-  const raw = input.trim();
+  let raw = input.trim();
+  if (!raw) return null;
+
+  // Strip decorator suffix if present (e.g. " (main) - SHA: 1234567")
+  raw = raw.replace(/\s*\([^)]*\)\s*-\s*SHA:.*$/i, '').trim();
   if (!raw) return null;
 
   // Case 1: SSH format "git@github.com:owner/repo(.git)?"

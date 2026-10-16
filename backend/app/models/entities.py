@@ -27,6 +27,7 @@ class JobBase(SQLModel):
     company: Optional[str] = None
     source_url: Optional[str] = None
     raw_text: str
+    role_profile: Optional[str] = None  # JSON string: seniority, domain, skill_depths
 
 
 class Job(JobBase, table=True):
@@ -43,6 +44,7 @@ class RequirementBase(SQLModel):
     requirement_type: RequirementType = Field(default=RequirementType.REQUIRED)
     weight: float = Field(default=1.0)
     source_snippet: str  # Exact sentence/excerpt from the job posting
+    aliases: Optional[str] = None  # JSON string of list of aliases/synonyms/imports
 
 
 class Requirement(RequirementBase, table=True):
@@ -53,6 +55,17 @@ class Requirement(RequirementBase, table=True):
     job: Optional[Job] = Relationship(back_populates="requirements")
     assessments: List["Assessment"] = Relationship(back_populates="requirement")
     audit_history: List["AuditHistory"] = Relationship(back_populates="requirement")
+
+
+# Learning Resource Cache Entity
+class LearningResourceCache(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    cache_key: str = Field(index=True, unique=True)  # normalized_skill:level
+    skill: str
+    level: str  # intern, junior, mid, senior, lead
+    resources_json: str  # JSON list of LearningResource objects
+    created_at: datetime = Field(default_factory=get_utc_now)
+    expires_at: datetime
 
 
 # 3. Repository Entity

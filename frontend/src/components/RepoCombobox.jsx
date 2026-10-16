@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useId } from 'react';
-import { ChevronDown, AlertCircle, Loader2, GitBranch, Check } from 'lucide-react';
+import { ChevronDown, AlertCircle, Loader2, GitBranch, Check, X } from 'lucide-react';
 import { parseGithubRepo } from '../utils/parseGithubRepo.js';
 
 /**
@@ -88,10 +88,12 @@ export default function RepoCombobox({
   const filteredRepos = React.useMemo(() => {
     const raw = inputValue.trim().toLowerCase();
     if (!raw) return combinedRepos;
-    // If input already has display decoration like " (main) - SHA:", strip it to filter by repo name
-    const matchBase = raw.split(' ')[0];
+    // Strip decorated suffix if present
+    const cleanRaw = raw.replace(/\s*\([^)]*\)\s*-\s*SHA:.*$/i, '').trim();
+    if (!cleanRaw) return combinedRepos;
+    const matchBase = cleanRaw.split(' ')[0];
     return combinedRepos.filter(r => 
-      r.full_name.toLowerCase().includes(raw) || 
+      r.full_name.toLowerCase().includes(cleanRaw) || 
       (matchBase && r.full_name.toLowerCase().includes(matchBase))
     );
   }, [combinedRepos, inputValue]);
@@ -131,6 +133,22 @@ export default function RepoCombobox({
     }
   };
 
+  // Clear repo selection so user can type or choose a new one easily
+  const handleClear = (e) => {
+    if (e) e.stopPropagation();
+    cancelActiveLookup();
+    setInputValue('');
+    setValidationError('');
+    setResolveError('');
+    setIsOpen(true);
+    setHighlightedIndex(-1);
+    if (onChange) onChange(null);
+    if (onValidationChange) onValidationChange(false);
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 10);
+  };
+
   // Resolve repository via GitHub API and backend connect
   const resolveAndConnect = async (rawInput) => {
     cancelActiveLookup();
@@ -152,11 +170,6 @@ export default function RepoCombobox({
     abortControllerRef.current = controller;
 
     try {
-      // 1. First attempt to verify and resolve via backend /repos/lookup or GitHub API
-      let repoData = null;
-      let defaultBranch = 'main';
-      let latestCommitSha = 'c9f3e8b417a250d4f9b871c890a1b2c3d4e5f678';
-
       // Call backend connect endpoint which validates & persists to DB
       const res = await fetch(`${apiBase}/repos/connect`, {
         method: 'POST',
@@ -176,9 +189,9 @@ export default function RepoCombobox({
         }
       }
 
-      repoData = await res.json();
-      defaultBranch = repoData.default_branch || 'main';
-      latestCommitSha = repoData.latest_commit_sha || 'c9f3e8b';
+      const repoData = await res.json();
+      const defaultBranch = repoData.default_branch || 'main';
+      const latestCommitSha = repoData.latest_commit_sha || 'c9f3e8b';
 
       // Update display text to standardized format
       const shaShort = latestCommitSha.slice(0, 7);
@@ -210,7 +223,7 @@ export default function RepoCombobox({
     setResolveError('');
 
     if (!val.trim()) {
-      setValidationError("Enter owner/repo or a GitHub URL");
+      setValidationError("");
       if (onValidationChange) onValidationChange(false);
       cancelActiveLookup();
       return;
@@ -218,7 +231,12 @@ export default function RepoCombobox({
 
     const parsed = parseGithubRepo(val);
     if (!parsed) {
-      setValidationError("Enter owner/repo or a GitHub URL");
+      // Don't flag error immediately while the user is still typing incomplete text (e.g. "tiangolo/")
+      if (!val.includes('/')) {
+        setValidationError('');
+      } else {
+        setValidationError("Enter owner/repo or a GitHub URL");
+      }
       if (onValidationChange) onValidationChange(false);
       cancelActiveLookup();
     } else {
@@ -268,7 +286,7 @@ export default function RepoCombobox({
       e.preventDefault();
       if (isOpen && highlightedIndex >= 0 && highlightedIndex < filteredRepos.length) {
         handleSelectOption(filteredRepos[highlightedIndex]);
-      } else {
+      } else if (inputValue.trim()) {
         setIsOpen(false);
         resolveAndConnect(inputValue);
       }
@@ -276,6 +294,14 @@ export default function RepoCombobox({
       e.preventDefault();
       setIsOpen(false);
       setHighlightedIndex(-1);
+    }
+  };
+
+  const handleFocus = () => {
+    setIsOpen(true);
+    // If the input contains a decorated full name, select the text so typing replaces it seamlessly
+    if (inputRef.current) {
+      inputRef.current.select();
     }
   };
 
@@ -292,14 +318,25 @@ export default function RepoCombobox({
         // If current input does not match current selectedRepo full_name
         if (!selectedRepo || selectedRepo.full_name.toLowerCase() !== parsed.fullName.toLowerCase()) {
           resolveAndConnect(inputValue);
+        } else {
+          setValidationError('');
+          if (onValidationChange) onValidationChange(true);
         }
       } else {
         setValidationError("Enter owner/repo or a GitHub URL");
         if (onValidationChange) onValidationChange(false);
       }
     } else {
-      setValidationError("Enter owner/repo or a GitHub URL");
-      if (onValidationChange) onValidationChange(false);
+      if (selectedRepo) {
+        const shaShort = selectedRepo.latest_commit_sha ? selectedRepo.latest_commit_sha.slice(0, 7) : 'HEAD';
+        const branch = selectedRepo.default_branch || 'main';
+        setInputValue(`${selectedRepo.full_name} (${branch}) - SHA: ${shaShort}`);
+        setValidationError('');
+        if (onValidationChange) onValidationChange(true);
+      } else {
+        setValidationError("Enter owner/repo or a GitHub URL");
+        if (onValidationChange) onValidationChange(false);
+      }
     }
   };
 
@@ -340,7 +377,7 @@ export default function RepoCombobox({
           value={inputValue}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
-          onFocus={() => setIsOpen(true)}
+          onFocus={handleFocus}
           onBlur={handleBlur}
           style={{
             flex: 1,
@@ -359,6 +396,29 @@ export default function RepoCombobox({
           <div style={{ padding: '0 6px', display: 'flex', alignItems: 'center' }}>
             <Loader2 size={16} className="pulse" color="var(--accent-primary)" style={{ animation: 'spin 1s linear infinite' }} />
           </div>
+        )}
+
+        {inputValue && (
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-label="Clear selected repository"
+            title="Clear and change repository"
+            onClick={handleClear}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              padding: '4px',
+              display: 'flex',
+              alignItems: 'center',
+              color: 'var(--text-dim)',
+              borderRadius: '50%',
+              marginRight: 2
+            }}
+          >
+            <X size={14} />
+          </button>
         )}
 
         <button

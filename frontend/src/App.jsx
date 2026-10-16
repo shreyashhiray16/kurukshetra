@@ -1,16 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { 
-  Briefcase, 
-  GitBranch, 
-  CheckCircle2, 
-  AlertCircle, 
-  XCircle, 
-  ExternalLink, 
-  RefreshCw, 
-  Upload, 
-  Terminal, 
-  ShieldCheck, 
+import {
+  Briefcase,
+  GitBranch,
+  CheckCircle2,
+  AlertCircle,
+  XCircle,
+  ExternalLink,
+  RefreshCw,
+  Upload,
+  Terminal,
+  ShieldCheck,
   Zap,
   TrendingUp,
   FileCode,
@@ -18,10 +18,23 @@ import {
   ChevronRight,
   Code,
   Key,
-  Sparkles
+  Sparkles,
+  Video,
+  BookOpen,
+  Clock,
+  Target,
+  ArrowUpRight,
+  Download,
+  Calendar,
+  CheckSquare,
+  PlayCircle,
+  MapPin,
+  Printer,
+  FileText
 } from 'lucide-react';
 
 import RepoCombobox from './components/RepoCombobox.jsx';
+import { downloadReportAsPdf } from './utils/pdfGenerator.js';
 
 const API_BASE = "http://127.0.0.1:8000/api/v1";
 
@@ -43,6 +56,7 @@ export default function App() {
     '/jobs': 'jobs',
     '/repos': 'repos',
     '/gap': 'gap',
+    '/roadmap': 'roadmap',
     '/evidence': 'evidence',
     '/history': 'history',
     '/settings': 'settings',
@@ -165,6 +179,21 @@ Responsibilities:
     }
   }
 
+  function handleDownloadRepo(repo) {
+    const target = repo || selectedRepo;
+    if (!target || !target.full_name) {
+      setFeedback({ type: 'error', message: "No repository selected to download." });
+      return;
+    }
+    const ref = target.latest_commit_sha || target.default_branch || 'main';
+    const downloadUrl = `https://github.com/${target.full_name}/archive/${ref}.zip`;
+    window.open(downloadUrl, '_blank', 'noopener,noreferrer');
+    setFeedback({
+      type: 'success',
+      message: `Downloading repository archive for ${target.full_name} (${ref.slice(0, 7)})...`
+    });
+  }
+
   async function handleImportJob(e) {
     if (e && e.preventDefault) e.preventDefault();
     if (!rawJobText.trim()) {
@@ -283,6 +312,7 @@ Responsibilities:
             <NavLink to="/jobs" className="nav-link"><Briefcase size={15} /> Jobs</NavLink>
             <NavLink to="/repos" className="nav-link"><GitBranch size={15} /> Repositories</NavLink>
             <NavLink to="/gap" className="nav-link"><TrendingUp size={15} /> Skill Gap</NavLink>
+            <NavLink to="/roadmap" className="nav-link"><Calendar size={15} /> 15-Day Roadmap</NavLink>
             <NavLink to="/evidence" className="nav-link"><FileCode size={15} /> Evidence</NavLink>
             <NavLink to="/history" className="nav-link"><Terminal size={15} /> History</NavLink>
             <NavLink to="/settings" className="nav-link"><Sparkles size={15} /> Settings {geminiConfigured ? "✓" : ""}</NavLink>
@@ -295,16 +325,16 @@ Responsibilities:
 
       {/* Main Content Area */}
       <main style={{ maxWidth: 1400, margin: '0 auto', padding: '28px 32px', width: '100%', flex: 1 }}>
-        
+
         {/* Selection Bar */}
         <section className="glass-panel" style={{ padding: '18px 24px', marginBottom: 28, display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: 260 }}>
             <label style={{ display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6, fontWeight: 700 }}>
               1. Target Job Profile
             </label>
-            <select 
+            <select
               id="select-job"
-              value={selectedJob ? selectedJob.id : ''} 
+              value={selectedJob ? selectedJob.id : ''}
               onChange={e => setSelectedJob(jobs.find(j => j.id === parseInt(e.target.value)))}
               style={{
                 width: '100%',
@@ -340,7 +370,7 @@ Responsibilities:
           </div>
 
           <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', paddingTop: 18 }}>
-            <button 
+            <button
               id="run-assessment-btn"
               onClick={handleRunAssessment}
               disabled={loading || !selectedJob || !selectedRepo || !isRepoValid}
@@ -348,7 +378,7 @@ Responsibilities:
             >
               <Zap size={16} /> Run Full Assessment
             </button>
-            <button 
+            <button
               id="poll-repo-btn"
               onClick={handleTriggerPoll}
               disabled={loading || !selectedRepo || !isRepoValid}
@@ -357,6 +387,37 @@ Responsibilities:
             >
               <RefreshCw size={15} /> Poll Repo
             </button>
+            <button
+              id="download-repo-btn"
+              onClick={() => handleDownloadRepo(selectedRepo)}
+              disabled={!selectedRepo || !selectedRepo.full_name}
+              className="btn btn-secondary"
+              title="Download repository source as .zip archive"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6
+              }}
+            >
+              <Download size={15} /> Download Repo
+            </button>
+            {assessmentResult && (
+              <button
+                id="download-pdf-btn"
+                onClick={() => downloadReportAsPdf({ assessmentResult })}
+                className="btn btn-secondary"
+                title="Download Assessment & 15-Day Roadmap as PDF"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  color: 'var(--accent-primary)',
+                  borderColor: 'rgba(225, 29, 72, 0.3)'
+                }}
+              >
+                <FileText size={15} /> Download PDF
+              </button>
+            )}
           </div>
         </section>
 
@@ -378,8 +439,8 @@ Responsibilities:
               {feedback.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
               <span>{feedback.message}</span>
             </div>
-            <button 
-              onClick={() => setFeedback(null)} 
+            <button
+              onClick={() => setFeedback(null)}
               style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit', fontWeight: 700 }}
             >
               ✕
@@ -488,10 +549,43 @@ Responsibilities:
                   </div>
                 </div>
 
-                {/* Skill Assessments List */}
-                <h2 style={{ fontSize: '1.25rem', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Layers size={20} color="var(--accent-primary)" /> Skill Breakdown & Verified Citations
-                </h2>
+                <div className="glass-panel" style={{
+                    padding: '16px 20px',
+                    marginBottom: 24,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: 16,
+                    background: 'linear-gradient(135deg, rgba(225, 29, 72, 0.05), rgba(99, 102, 241, 0.05))',
+                    border: '1px solid rgba(225, 29, 72, 0.2)'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                      <div style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--accent-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0 }}>
+                        <Calendar size={22} />
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-main)' }}>
+                          Personalized 15-Day Implementation Roadmap Available
+                        </div>
+                        <div style={{ fontSize: '0.84rem', color: 'var(--text-muted)' }}>
+                          Custom step-by-step daily code milestones tailored to your {assessmentResult.repo_full_name} gaps with verified video references.
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => navigate('/roadmap')}
+                      className="btn btn-primary"
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.88rem' }}
+                    >
+                      <Calendar size={16} /> View 15-Day Roadmap <ChevronRight size={16} />
+                    </button>
+                  </div>
+
+                  {/* Skill Assessments List */}
+                  <h2 style={{ fontSize: '1.25rem', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Layers size={20} color="var(--accent-primary)" /> Skill Breakdown & Verified Citations
+                  </h2>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                   {assessmentResult.skill_assessments?.map(skill => {
@@ -500,10 +594,10 @@ Responsibilities:
                     const isUnmet = skill.status === 'unmet';
 
                     return (
-                      <div 
-                        key={skill.requirement_id} 
-                        className="glass-panel" 
-                        style={{ 
+                      <div
+                        key={skill.requirement_id}
+                        className="glass-panel"
+                        style={{
                           padding: 22,
                           borderLeft: `4px solid ${isMet ? 'var(--status-met)' : isPartial ? 'var(--status-partial)' : 'var(--status-unmet)'}`
                         }}
@@ -556,9 +650,9 @@ Responsibilities:
                                       {c.file_path}<span style={{ color: '#d97706', fontWeight: 600 }}>#L{c.start_line}-L{c.end_line}</span>
                                     </span>
                                   </div>
-                                  <a 
-                                    href={c.github_url} 
-                                    target="_blank" 
+                                  <a
+                                    href={c.github_url}
+                                    target="_blank"
                                     rel="noreferrer"
                                     style={{ color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: 4, textDecoration: 'none', fontSize: '0.8rem', fontWeight: 600 }}
                                   >
@@ -570,10 +664,96 @@ Responsibilities:
                           </div>
                         )}
 
+                        {/* LEARN THIS: VERIFIED LEARNING RESOURCES (VIDEOS & DOCS) */}
+                        {skill.resources && skill.resources.length > 0 && (
+                          <div style={{
+                            marginTop: 14,
+                            background: '#f8fafc',
+                            borderRadius: 'var(--radius-md)',
+                            padding: 14,
+                            border: '1px solid var(--border-subtle)'
+                          }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                              <div style={{ fontSize: '0.8rem', textTransform: 'uppercase', color: '#0284c7', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <BookOpen size={14} /> Learn this: Real Verified Resources ({skill.resources.length})
+                              </div>
+                              <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
+                                Links verified via HTTP/oEmbed
+                              </span>
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              {skill.resources.map((res, rIdx) => (
+                                <div
+                                  key={rIdx}
+                                  style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    background: '#ffffff',
+                                    padding: '10px 14px',
+                                    borderRadius: 'var(--radius-sm)',
+                                    border: '1px solid var(--border-subtle)',
+                                    gap: 12
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                                    {res.type === 'youtube' ? (
+                                      <Video size={18} color="#ef4444" style={{ marginTop: 2, flexShrink: 0 }} />
+                                    ) : (
+                                      <BookOpen size={18} color="#0284c7" style={{ marginTop: 2, flexShrink: 0 }} />
+                                    )}
+                                    <div>
+                                      <div style={{ fontSize: '0.88rem', fontWeight: 600, color: '#0f172a' }}>{res.title}</div>
+                                      <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 10, marginTop: 2 }}>
+                                        <span>{res.channel_or_site || (res.type === 'youtube' ? 'YouTube' : 'Documentation')}</span>
+                                        {res.duration_minutes && (
+                                          <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                                            <Clock size={11} /> {res.duration_minutes}m
+                                          </span>
+                                        )}
+                                        {res.why_relevant && <span>• {res.why_relevant}</span>}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <a
+                                    href={res.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="btn btn-secondary"
+                                    style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 4, textDecoration: 'none', flexShrink: 0 }}
+                                  >
+                                    Open <ArrowUpRight size={13} />
+                                  </a>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* TARGET PRACTICE TASK */}
+                        {skill.practice_task && (
+                          <div style={{
+                            marginTop: 12,
+                            padding: '10px 14px',
+                            background: 'rgba(99, 102, 241, 0.08)',
+                            borderLeft: '3px solid #6366f1',
+                            borderRadius: '0 var(--radius-sm) var(--radius-sm) 0',
+                            fontSize: '0.86rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10
+                          }}>
+                            <Target size={16} color="#6366f1" style={{ flexShrink: 0 }} />
+                            <span><strong>Target Practice Task:</strong> {skill.practice_task}</span>
+                          </div>
+                        )}
+
                         {/* Next Step / Action Plan */}
                         {skill.next_step && (
                           <div style={{
-                            marginTop: 14,
+                            marginTop: 10,
                             padding: '10px 14px',
                             background: '#fff1f2',
                             borderLeft: '3px solid var(--accent-primary)',
@@ -607,6 +787,225 @@ Responsibilities:
           </div>
         )}
 
+        {/* TAB: 15-DAY ROADMAP */}
+        {page === 'roadmap' && (
+          <div className="animate-fade-in">
+            {assessmentResult && assessmentResult.roadmap ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+                {/* Roadmap Header Card */}
+                <div className="glass-panel" style={{
+                  padding: '24px 28px',
+                  background: 'linear-gradient(135deg, rgba(225, 29, 72, 0.04), rgba(99, 102, 241, 0.04))',
+                  border: '1px solid rgba(225, 29, 72, 0.2)'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--accent-primary)', fontWeight: 700, fontSize: '0.85rem', textTransform: 'uppercase', marginBottom: 6 }}>
+                        <Calendar size={18} /> 15-Day Targeted Implementation Plan
+                      </div>
+                      <h2 style={{ fontSize: '1.5rem', marginBottom: 6 }}>{assessmentResult.roadmap.title}</h2>
+                      <p style={{ color: 'var(--text-muted)', fontSize: '0.92rem', maxWidth: 800 }}>
+                        {assessmentResult.roadmap.summary}
+                      </p>
+                    </div>
+                    <div style={{ display: 'flex', gap: 10 }}>
+                      <button
+                        onClick={() => navigate('/gap')}
+                        className="btn btn-secondary"
+                        style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                      >
+                        <TrendingUp size={15} /> Back to Skill Gap
+                      </button>
+                      <button
+                        onClick={() => {
+                          const jsonStr = JSON.stringify(assessmentResult.roadmap, null, 2);
+                          const blob = new Blob([jsonStr], { type: 'application/json' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `roadmap-15days-${assessmentResult.repo_full_name.replace('/', '-')}.json`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        className="btn btn-secondary"
+                        style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                      >
+                        <Download size={15} /> Export Plan JSON
+                      </button>
+                      <button
+                        onClick={() => downloadReportAsPdf({ assessmentResult })}
+                        className="btn btn-primary"
+                        style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                      >
+                        <FileText size={15} /> Download PDF
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{
+                    marginTop: 20,
+                    padding: '12px 16px',
+                    background: '#ffffff',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border-subtle)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    fontSize: '0.88rem'
+                  }}>
+                    <Target size={18} color="var(--accent-primary)" style={{ flexShrink: 0 }} />
+                    <span><strong>Expected Outcome:</strong> {assessmentResult.roadmap.expected_outcome}</span>
+                  </div>
+                </div>
+
+                {/* Phases & Daily Tasks */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+                  {assessmentResult.roadmap.phases?.map(phase => (
+                    <div key={phase.phase_number} className="glass-panel" style={{ padding: 24 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 16, borderBottom: '1px solid var(--border-subtle)', paddingBottom: 14 }}>
+                        <div>
+                          <div style={{ fontSize: '0.78rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700 }}>
+                            Phase {phase.phase_number} • {phase.day_range}
+                          </div>
+                          <h3 style={{ fontSize: '1.2rem', marginTop: 2 }}>{phase.title}</h3>
+                        </div>
+                        <div style={{ fontSize: '0.82rem', padding: '4px 12px', background: 'var(--bg-secondary)', borderRadius: 9999, border: '1px solid var(--border-subtle)' }}>
+                          Milestone: <strong style={{ color: 'var(--text-main)' }}>{phase.milestone}</strong>
+                        </div>
+                      </div>
+
+                      {/* Daily Tasks List */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 16 }}>
+                        {phase.tasks?.map(task => (
+                          <div
+                            key={task.day}
+                            style={{
+                              background: '#ffffff',
+                              border: '1px solid var(--border-subtle)',
+                              borderRadius: 'var(--radius-md)',
+                              padding: 18,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              justifyContent: 'space-between',
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.02)'
+                            }}
+                          >
+                            <div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                <span style={{
+                                  background: 'var(--accent-primary)',
+                                  color: '#fff',
+                                  fontSize: '0.75rem',
+                                  fontWeight: 700,
+                                  padding: '2px 8px',
+                                  borderRadius: 4
+                                }}>
+                                  Day {task.day}
+                                </span>
+                                <span style={{
+                                  fontSize: '0.78rem',
+                                  color: '#4f46e5',
+                                  background: '#eef2ff',
+                                  padding: '2px 8px',
+                                  borderRadius: 4,
+                                  fontWeight: 600
+                                }}>
+                                  {task.target_skill}
+                                </span>
+                              </div>
+
+                              <h4 style={{ fontSize: '0.98rem', marginBottom: 6 }}>{task.day_title}</h4>
+                              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 12 }}>
+                                {task.action_goal}
+                              </p>
+
+                              {/* Concrete Coding Task */}
+                              <div style={{
+                                background: 'var(--bg-secondary)',
+                                padding: '10px 12px',
+                                borderRadius: 'var(--radius-sm)',
+                                fontSize: '0.82rem',
+                                borderLeft: '3px solid #6366f1',
+                                marginBottom: 10
+                              }}>
+                                <div style={{ fontWeight: 600, color: 'var(--text-main)', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <Code size={13} color="#6366f1" /> Coding Task:
+                                </div>
+                                <div style={{ color: 'var(--text-main)' }}>{task.code_task}</div>
+                              </div>
+
+                              {/* Verification Step */}
+                              <div style={{
+                                background: '#f0fdf4',
+                                padding: '8px 12px',
+                                borderRadius: 'var(--radius-sm)',
+                                fontSize: '0.8rem',
+                                borderLeft: '3px solid #16a34a',
+                                marginBottom: 12
+                              }}>
+                                <div style={{ fontWeight: 600, color: '#16a34a', marginBottom: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <CheckSquare size={13} /> Verification:
+                                </div>
+                                <div style={{ color: '#14532d' }}>{task.verification_step}</div>
+                              </div>
+                            </div>
+
+                            {/* Recommended Learning Videos & Docs */}
+                            {task.recommended_resources && task.recommended_resources.length > 0 && (
+                              <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 10, marginTop: 4 }}>
+                                <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
+                                  <PlayCircle size={12} color="#dc2626" /> Reference Learning:
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  {task.recommended_resources.map((res, rIdx) => (
+                                    <a
+                                      key={rIdx}
+                                      href={res.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        textDecoration: 'none',
+                                        background: 'var(--bg-secondary)',
+                                        padding: '5px 8px',
+                                        borderRadius: 4,
+                                        fontSize: '0.78rem',
+                                        color: 'var(--text-main)'
+                                      }}
+                                    >
+                                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '85%' }}>
+                                        {res.title}
+                                      </span>
+                                      <ArrowUpRight size={12} color="var(--accent-primary)" />
+                                    </a>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="glass-panel" style={{ padding: 48, textAlign: 'center' }}>
+                <Calendar size={44} color="var(--accent-primary)" style={{ margin: '0 auto 16px auto', display: 'block' }} />
+                <h3 style={{ fontSize: '1.25rem', marginBottom: 8 }}>15-Day Roadmap Ready to Generate</h3>
+                <p style={{ color: 'var(--text-muted)', maxWidth: 500, margin: '0 auto 20px auto', fontSize: '0.92rem' }}>
+                  Run a full assessment on the Skill Gap tab first. The coach will analyze your repository, identify unmet competencies, and generate a customized 15-day daily implementation roadmap.
+                </p>
+                <button onClick={() => navigate('/gap')} className="btn btn-primary">
+                  <TrendingUp size={16} /> Go to Skill Gap Assessment
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* TAB 2: IMPORT FORM */}
         {page === 'jobs' && (
           <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: 24 }}>
@@ -620,10 +1019,10 @@ Responsibilities:
                   <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 6 }}>
                     Job Source URL (Optional)
                   </label>
-                  <input 
+                  <input
                     id="job-source-url-input"
-                    type="url" 
-                    value={sourceUrl} 
+                    type="url"
+                    value={sourceUrl}
                     onChange={e => setSourceUrl(e.target.value)}
                     style={{
                       width: '100%',
@@ -640,10 +1039,10 @@ Responsibilities:
                   <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 6 }}>
                     Raw Job Description Text
                   </label>
-                  <textarea 
+                  <textarea
                     id="job-raw-text-input"
                     rows={8}
-                    value={rawJobText} 
+                    value={rawJobText}
                     onChange={e => setRawJobText(e.target.value)}
                     style={{
                       width: '100%',
@@ -674,11 +1073,11 @@ Responsibilities:
                   <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 6 }}>
                     Repository Full Name (owner/repo)
                   </label>
-                  <input 
+                  <input
                     id="repo-name-input"
-                    type="text" 
+                    type="text"
                     placeholder="octocat/Hello-World"
-                    value={newRepoFullName} 
+                    value={newRepoFullName}
                     onChange={e => setNewRepoFullName(e.target.value)}
                     style={{
                       width: '100%',
@@ -706,7 +1105,29 @@ Responsibilities:
                         SHA: {r.latest_commit_sha ? r.latest_commit_sha.slice(0, 10) : 'HEAD'}
                       </div>
                     </div>
-                    <span className="badge badge-met">Active</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedRepo(r);
+                          setFeedback({ type: 'success', message: `Selected repository: ${r.full_name}` });
+                        }}
+                        className="btn btn-secondary"
+                        style={{ padding: '4px 10px', fontSize: '0.78rem' }}
+                      >
+                        Select
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadRepo(r)}
+                        className="btn btn-secondary"
+                        title="Download ZIP"
+                        style={{ padding: '4px 10px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 4 }}
+                      >
+                        <Download size={13} /> ZIP
+                      </button>
+                      <span className="badge badge-met">Active</span>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -714,7 +1135,7 @@ Responsibilities:
           </div>
         )}
 
-        {/* TAB 3: WEBHOOK EVENTS */}
+        {/* TAB 3: REPOSITORIES / WEBHOOK EVENTS */}
         {page === 'repos' && (
           <div className="animate-fade-in">
             <div className="glass-panel" style={{ padding: 24, maxWidth: 720 }}>
@@ -728,9 +1149,34 @@ Responsibilities:
               </form>
               <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {repos.map(r => (
-                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8 }}>
-                    <div><strong>{r.full_name}</strong><div className="mono" style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>{r.latest_commit_sha ? r.latest_commit_sha.slice(0, 10) : 'HEAD'}</div></div>
-                    <span className="badge badge-met">Tracked</span>
+                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8 }}>
+                    <div>
+                      <strong>{r.full_name}</strong>
+                      <div className="mono" style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>{r.latest_commit_sha ? r.latest_commit_sha.slice(0, 10) : 'HEAD'}</div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedRepo(r);
+                          setFeedback({ type: 'success', message: `Selected repository: ${r.full_name}` });
+                        }}
+                        className="btn btn-secondary"
+                        style={{ padding: '4px 10px', fontSize: '0.78rem' }}
+                      >
+                        Select
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadRepo(r)}
+                        className="btn btn-secondary"
+                        title="Download ZIP"
+                        style={{ padding: '4px 10px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 4 }}
+                      >
+                        <Download size={13} /> ZIP
+                      </button>
+                      <span className="badge badge-met">Tracked</span>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -884,7 +1330,7 @@ Responsibilities:
                     {geminiConfigured ? "Gemini LLM Active & Connected" : "Gemini API Key Required"}
                   </div>
                   <div style={{ fontSize: '0.82rem', color: 'var(--text-dim)', marginTop: 4 }}>
-                    {geminiConfigured 
+                    {geminiConfigured
                       ? `Key configured (${maskedKey}). All skill assessments will be decided by Gemini model.`
                       : "Currently falling back to deterministic line-range rules until key is supplied."
                     }
@@ -903,7 +1349,7 @@ Responsibilities:
                   </label>
                   <div style={{ display: 'flex', gap: 10 }}>
                     <div style={{ position: 'relative', flex: 1 }}>
-                      <input 
+                      <input
                         id="gemini-api-key-input"
                         type="password"
                         placeholder={geminiConfigured ? "Enter new key to update..." : "AIzaSy..."}
@@ -921,10 +1367,10 @@ Responsibilities:
                         }}
                       />
                     </div>
-                    <button 
+                    <button
                       id="save-gemini-key-btn"
-                      type="submit" 
-                      disabled={loading || !inputGeminiKey.trim()} 
+                      type="submit"
+                      disabled={loading || !inputGeminiKey.trim()}
                       className="btn btn-primary"
                     >
                       <Key size={16} /> Save & Activate Key
