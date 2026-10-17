@@ -44,8 +44,17 @@ async def run_assessment(payload: AssessmentRunRequest, session: Session = Depen
     if not requirements:
         raise HTTPException(status_code=400, detail="Job has no extracted requirements.")
 
+    # Ensure latest commit SHA is accurate for the repository
+    if not repo.latest_commit_sha or repo.latest_commit_sha == "c9f3e8b417a250d4f9b871c890a1b2c3d4e5f678":
+        latest_sha = await GitHubScannerService.get_latest_commit_sha(repo.full_name, repo.default_branch)
+        if latest_sha and latest_sha != "c9f3e8b417a250d4f9b871c890a1b2c3d4e5f678":
+            repo.latest_commit_sha = latest_sha
+            session.add(repo)
+            session.commit()
+            session.refresh(repo)
+
     # Get repository file tree
-    tree = await GitHubScannerService.get_repo_tree(repo.full_name, repo.latest_commit_sha or "main")
+    tree = await GitHubScannerService.get_repo_tree(repo.full_name, repo.latest_commit_sha or "HEAD")
     tree_paths = [item["path"] for item in tree]
     content_cache: dict = {}
 

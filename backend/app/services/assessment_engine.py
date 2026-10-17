@@ -303,12 +303,25 @@ class AssessmentEngineService:
                 cited_indices = [i for i in llm_eval.get("cited_code_ids", []) if isinstance(i, int) and i < len(shown_code)]
                 cited = [shown_code[i] for i in cited_indices]
 
-                # Deterministic validation of the LLM verdict
-                if status == AssessmentStatus.MET and not cited:
-                    status = AssessmentStatus.NEEDS_REVIEW
-                    limitations.append("Validation: 'met' claimed without valid executable-code citations")
+                # Deterministic validation of the LLM verdict against real code evidence
+                if not code_snippets and not doc_dep_snippets:
+                    status = AssessmentStatus.UNMET
+                    confidence = 0.0
+                    cited = []
+                    code_snippets = []
+                    reason = f"No evidence of '{req.title}' found in inspected repository files for {repo.full_name}."
+                elif status == AssessmentStatus.MET and not cited:
+                    # If LLM claimed 'met' but provided no valid citations from code
+                    if len(code_snippets) >= 2:
+                        cited = code_snippets[:2]
+                    elif len(code_snippets) == 1:
+                        status = AssessmentStatus.PARTIAL
+                        cited = code_snippets[:1]
+                    else:
+                        status = AssessmentStatus.PARTIAL if doc_dep_snippets else AssessmentStatus.UNMET
                 elif status == AssessmentStatus.MET and not code_snippets:
-                    status = AssessmentStatus.NEEDS_REVIEW
+                    status = AssessmentStatus.PARTIAL if doc_dep_snippets else AssessmentStatus.UNMET
+                    limitations.append("Overridden: 'met' cannot be granted without executable code")
                 elif status == AssessmentStatus.UNMET and code_snippets:
                     status = AssessmentStatus.NEEDS_REVIEW
                     limitations.append("Validation: 'unmet' claimed but code evidence exists")
@@ -320,6 +333,8 @@ class AssessmentEngineService:
 
                 if cited:
                     code_snippets = cited + [c for c in code_snippets if c not in cited]
+                elif not doc_dep_snippets and not code_snippets:
+                    code_snippets = []
             else:
                 # Deterministic Fallback Rules
                 if len(code_snippets) >= 2:

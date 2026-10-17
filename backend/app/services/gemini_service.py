@@ -104,16 +104,17 @@ Return JSON: {{"expansions": [{{"title": "string matching input requirement", "t
 Target Role Seniority: {seniority}
 Domain: {role_profile.get('domain', 'general')}
 Role Depth Expectations: {expected_depth}
-Repository: {sanitize(repo_name, 100)}
+Repository Under Evaluation: {sanitize(repo_name, 100)}
 
-INVARIANTS & EVALUATION RULES:
-1. Seniority depth rule: A "senior" or "lead" requirement requires robust code evidence (error handling, testing, modular design patterns, architectural separation), not just a 1-line script or trivial import. If only trivial usage exists for a senior role, mark "partial". For junior/intern, working basic usage can be "met".
-2. "met": Substantive working executable code demonstrating the required depth.
-3. "partial": Minimal code, shallow usage, or declared in README/dependency manifest only.
-4. "unmet": No evidence in repo files. "unmet" means not found in this repository snapshot, NOT that the person lacks the skill.
-5. cited_code_ids: list of indices from each skill's executable code snippets list.
-6. Provide a concise plain-English "practice_task" tied to this repository structure (e.g. "Add an async endpoint with pytest test suite to app/api/...").
-7. Also provide an overall "rationale" summarizing candidate readiness for this specific {seniority} role.
+CRITICAL GROUND-TRUTH RULES (NO HALLUCINATIONS):
+1. You are strictly evaluating the SPECIFIC repository "{sanitize(repo_name, 100)}" based ONLY on the evidence provided in <DATA>.
+2. IF "code_snippets" is empty and "doc_dep_snippets" is empty for a skill, you MUST evaluate status as "unmet". Do NOT invent code or assume the skill exists.
+3. IF only "doc_dep_snippets" has text and "code_snippets" is empty, you MUST evaluate status as "partial" (declared in manifest/docs only, no functional code).
+4. IF "code_snippets" has real code, evaluate depth: for senior/lead roles, shallow 1-line usage is "partial", robust multi-line usage is "met".
+5. cited_code_ids MUST ONLY contain indices from the skill's provided "code_snippets" list. If code_snippets is empty, cited_code_ids MUST be [].
+6. In your "reason", explicitly reference the repository "{sanitize(repo_name, 100)}" and describe what is or is not present in its files.
+7. Provide a concise plain-English "practice_task" tied to this repository structure (e.g. "Add an endpoint in {sanitize(repo_name, 100)}...").
+8. Also provide an overall "rationale" summarizing candidate readiness specifically for this repository's codebase.
 
 Skills to Evaluate: <DATA>{json.dumps(clean_skills, indent=1)}</DATA>
 
