@@ -9,7 +9,7 @@ engine = create_engine(
 )
 
 def init_db():
-    from app.models.entities import Job, Requirement, Repository, Assessment, Citation, AuditHistory, WebhookEvent
+    from app.models.entities import Job, Requirement, Repository, Assessment, Citation, AuditHistory, WebhookEvent, LearningResourceCache
     # Enable WAL mode for high concurrency in SQLite
     if "sqlite" in settings.DATABASE_URL:
         with engine.connect() as conn:
@@ -19,13 +19,25 @@ def init_db():
     # create_all does not add columns to tables that already exist
     if "sqlite" in settings.DATABASE_URL:
         with engine.connect() as conn:
-            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(assessment)").fetchall()]
-            if cols:
-                if "llm_model" not in cols:
+            # Migration for assessment
+            cols_assessment = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(assessment)").fetchall()]
+            if cols_assessment:
+                if "llm_model" not in cols_assessment:
                     conn.exec_driver_sql("ALTER TABLE assessment ADD COLUMN llm_model VARCHAR")
-                if "llm_raw_response" not in cols:
+                if "llm_raw_response" not in cols_assessment:
                     conn.exec_driver_sql("ALTER TABLE assessment ADD COLUMN llm_raw_response TEXT")
-                conn.commit()
+
+            # Migration for job
+            cols_job = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(job)").fetchall()]
+            if cols_job and "role_profile" not in cols_job:
+                conn.exec_driver_sql("ALTER TABLE job ADD COLUMN role_profile TEXT")
+
+            # Migration for requirement
+            cols_req = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(requirement)").fetchall()]
+            if cols_req and "aliases" not in cols_req:
+                conn.exec_driver_sql("ALTER TABLE requirement ADD COLUMN aliases TEXT")
+
+            conn.commit()
 
 def get_session():
     with Session(engine) as session:

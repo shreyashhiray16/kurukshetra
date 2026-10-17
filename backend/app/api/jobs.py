@@ -31,11 +31,15 @@ async def import_job(payload: JobImportRequest, session: Session = Depends(get_s
     extracted = JobExtractorService.extract_requirements(raw_text, payload.source_url)
 
     # Persist Job record
+    import json
+    role_profile_str = json.dumps(extracted.role_profile) if extracted.role_profile else None
+
     job = Job(
         title=extracted.title,
         company=extracted.company,
         source_url=payload.source_url,
-        raw_text=raw_text
+        raw_text=raw_text,
+        role_profile=role_profile_str
     )
     session.add(job)
     session.commit()
@@ -64,12 +68,14 @@ async def import_job(payload: JobImportRequest, session: Session = Depends(get_s
             "source_snippet": db_req.source_snippet
         })
 
+    role_prof_dict = json.loads(job.role_profile) if job.role_profile else None
     return JobResponse(
         id=job.id,
         title=job.title,
         company=job.company,
         source_url=job.source_url,
         raw_text=job.raw_text,
+        role_profile=role_prof_dict,
         created_at=job.created_at,
         requirements=req_dicts,
         extraction_source=JobExtractorService.last_source,
@@ -79,6 +85,7 @@ async def import_job(payload: JobImportRequest, session: Session = Depends(get_s
 @router.get("/{job_id}", response_model=JobResponse)
 def get_job(job_id: int, session: Session = Depends(get_session)):
     """Fetch job details and its associated structured requirements."""
+    import json
     job = session.exec(select(Job).where(Job.id == job_id)).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
@@ -95,6 +102,7 @@ def get_job(job_id: int, session: Session = Depends(get_session)):
         }
         for r in reqs
     ]
+    role_prof_dict = json.loads(job.role_profile) if job.role_profile else None
 
     return JobResponse(
         id=job.id,
@@ -102,6 +110,7 @@ def get_job(job_id: int, session: Session = Depends(get_session)):
         company=job.company,
         source_url=job.source_url,
         raw_text=job.raw_text,
+        role_profile=role_prof_dict,
         created_at=job.created_at,
         requirements=req_dicts
     )
@@ -109,10 +118,12 @@ def get_job(job_id: int, session: Session = Depends(get_session)):
 @router.get("/", response_model=List[JobResponse])
 def list_jobs(session: Session = Depends(get_session)):
     """List all imported jobs."""
+    import json
     jobs = session.exec(select(Job)).all()
     results = []
     for j in jobs:
         reqs = session.exec(select(Requirement).where(Requirement.job_id == j.id)).all()
+        role_prof_dict = json.loads(j.role_profile) if j.role_profile else None
         results.append(
             JobResponse(
                 id=j.id,
@@ -120,6 +131,7 @@ def list_jobs(session: Session = Depends(get_session)):
                 company=j.company,
                 source_url=j.source_url,
                 raw_text=j.raw_text,
+                role_profile=role_prof_dict,
                 created_at=j.created_at,
                 requirements=[
                     {
