@@ -18,11 +18,19 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-3.5-flash"
     GEMINI_FALLBACK_MODELS: str = "gemini-3-flash-preview,gemma-4-26b-a4b-it"
     # Groq models
-    GROQ_MODEL: str = "openai/gpt-oss-120b"
-    GROQ_FALLBACK_MODELS: str = "qwen/qwen3.8-27b,openai/gpt-oss-20b"
+    GROQ_MODEL: str = "qwen/qwen3.8-27b"
+    GROQ_FALLBACK_MODELS: str = "openai/gpt-oss-20b,openai/gpt-oss-120b"
     LLM_MAX_RETRIES: int = 1
     GITHUB_TOKEN: str = ""
     GITHUB_WEBHOOK_SECRET: str = "test-webhook-secret-key-12345"
+    
+    # Job Source Providers (Naukri / Fallbacks)
+    JOB_SOURCE: str = "naukri"
+    NAUKRI_BASE_URL: str = "https://www.naukri.com"
+    NAUKRI_APP_ID: str = "109"
+    NAUKRI_SYSTEM_ID: str = "109"
+    JOB_SEARCH_CACHE_TTL: int = 600  # 10 minutes
+    JSEARCH_API_KEY: str = ""
     
     # CORS
     CORS_ORIGINS: list[str] = [
@@ -30,9 +38,14 @@ class Settings(BaseSettings):
         "http://127.0.0.1:1200",
         "http://localhost:3000",
         "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
         "http://localhost:8000",
+        "http://127.0.0.1:8000",
     ]
 
     # Root .env is listed last so the key you edit there wins over backend/.env

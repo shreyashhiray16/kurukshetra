@@ -22,8 +22,10 @@ import {
 } from 'lucide-react';
 
 import RepoCombobox from './components/RepoCombobox.jsx';
+import NaukriPage from './pages/NaukriPage.jsx';
+import RepoLinker from './components/naukri/RepoLinker.jsx';
 
-const API_BASE = "http://127.0.0.1:8000/api/v1";
+const API_BASE = "/api/v1";
 
 export default function App() {
   const [jobs, setJobs] = useState([]);
@@ -38,15 +40,23 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+
+  // Redirect /repos to /naukri so old bookmarks/links don't break
+  useEffect(() => {
+    if (location.pathname === '/repos') {
+      navigate('/naukri' + location.search, { replace: true });
+    }
+  }, [location.pathname, location.search, navigate]);
+
   const page = ({
     '/': 'dashboard',
+    '/naukri': 'naukri',
     '/jobs': 'jobs',
-    '/repos': 'repos',
     '/gap': 'gap',
     '/evidence': 'evidence',
     '/history': 'history',
     '/settings': 'settings',
-  })[location.pathname] || 'dashboard';
+  })[location.pathname] || (location.pathname === '/repos' ? 'naukri' : 'dashboard');
   const [error, setError] = useState(null);
 
   // Gemini state
@@ -213,7 +223,14 @@ Responsibilities:
       });
       if (!res.ok) {
         const errText = await res.text();
-        throw new Error(errText);
+        let message = `Server error (${res.status})`;
+        try {
+          const parsed = JSON.parse(errText);
+          message = parsed.detail?.detail || parsed.detail || message;
+        } catch {
+          message = errText.slice(0, 150) || message;
+        }
+        throw new Error(message);
       }
       const data = await res.json();
       setAssessmentResult(data);
@@ -280,10 +297,10 @@ Responsibilities:
 
           <nav style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
             <NavLink to="/" end className="nav-link"><Layers size={15} /> Dashboard</NavLink>
-            <NavLink to="/jobs" className="nav-link"><Briefcase size={15} /> Jobs</NavLink>
-            <NavLink to="/repos" className="nav-link"><GitBranch size={15} /> Repositories</NavLink>
+            <NavLink to="/naukri" className="nav-link"><Briefcase size={15} /> Naukri</NavLink>
+            <NavLink to="/jobs" className="nav-link"><FileCode size={15} /> Jobs</NavLink>
             <NavLink to="/gap" className="nav-link"><TrendingUp size={15} /> Skill Gap</NavLink>
-            <NavLink to="/evidence" className="nav-link"><FileCode size={15} /> Evidence</NavLink>
+            <NavLink to="/evidence" className="nav-link"><CheckCircle2 size={15} /> Evidence</NavLink>
             <NavLink to="/history" className="nav-link"><Terminal size={15} /> History</NavLink>
             <NavLink to="/settings" className="nav-link"><Sparkles size={15} /> Settings {geminiConfigured ? "✓" : ""}</NavLink>
             <button id="refresh-btn" onClick={() => { loadInitialData(); checkGeminiConfig(); }} className="btn btn-secondary" title="Refresh Data">
@@ -664,78 +681,60 @@ Responsibilities:
               </form>
             </div>
 
-            {/* Connect Repository */}
-            <div className="glass-panel" style={{ padding: 24 }}>
-              <h3 style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <GitBranch size={20} color="var(--accent-primary)" /> Connect GitHub Repository
-              </h3>
-              <form onSubmit={handleConnectRepo}>
-                <div style={{ marginBottom: 18 }}>
-                  <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 6 }}>
-                    Repository Full Name (owner/repo)
-                  </label>
-                  <input 
-                    id="repo-name-input"
-                    type="text" 
-                    placeholder="octocat/Hello-World"
-                    value={newRepoFullName} 
-                    onChange={e => setNewRepoFullName(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '9px 12px',
-                      background: 'var(--bg-secondary)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: 'var(--radius-sm)',
-                      color: 'var(--text-main)',
-                      fontSize: '0.9rem'
-                    }}
-                  />
-                </div>
-                <button id="submit-connect-repo-btn" type="submit" disabled={loading} className="btn btn-primary" style={{ width: '100%', marginBottom: 20 }}>
-                  <ShieldCheck size={16} /> Connect & Scan Repository Tree
-                </button>
-              </form>
-
-              <h4 style={{ fontSize: '0.9rem', marginBottom: 10, color: 'var(--text-muted)' }}>Connected Repositories ({repos.length})</h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {repos.map(r => (
-                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{r.full_name}</div>
-                      <div className="mono" style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
-                        SHA: {r.latest_commit_sha ? r.latest_commit_sha.slice(0, 10) : 'HEAD'}
-                      </div>
-                    </div>
-                    <span className="badge badge-met">Active</span>
-                  </div>
-                ))}
-              </div>
+            {/* Link Repositories (Reusing RepoLinker) */}
+            <div>
+              <RepoLinker
+                repos={repos}
+                selectedRepoIds={repos.map(r => r.id)}
+                apiBase={API_BASE}
+                onRepoConnected={(newRepo) => {
+                  setRepos(prev => [...prev.filter(r => r.id !== newRepo.id), newRepo]);
+                  loadInitialData();
+                }}
+                onRepoUnlinked={(id) => {
+                  setRepos(prev => prev.filter(r => r.id !== id));
+                  loadInitialData();
+                }}
+              />
             </div>
           </div>
         )}
 
-        {/* TAB 3: WEBHOOK EVENTS */}
-        {page === 'repos' && (
-          <div className="animate-fade-in">
-            <div className="glass-panel" style={{ padding: 24, maxWidth: 720 }}>
-              <h3 style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <GitBranch size={20} color="var(--accent-primary)" /> Connect GitHub Repository
-              </h3>
-              <form onSubmit={handleConnectRepo}>
-                <input id="repo-name-input" type="text" placeholder="octocat/Hello-World" value={newRepoFullName} onChange={e => setNewRepoFullName(e.target.value)}
-                  style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', marginBottom: 14 }} />
-                <button id="submit-connect-repo-btn" type="submit" disabled={loading} className="btn btn-primary"><ShieldCheck size={16} /> Connect & Scan</button>
-              </form>
-              <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {repos.map(r => (
-                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8 }}>
-                    <div><strong>{r.full_name}</strong><div className="mono" style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>{r.latest_commit_sha ? r.latest_commit_sha.slice(0, 10) : 'HEAD'}</div></div>
-                    <span className="badge badge-met">Tracked</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+        {/* TAB 3: NAUKRI LIVE JOB FEED & MULTI-REPO ASSESSMENT */}
+        {page === 'naukri' && (
+          <NaukriPage
+            repos={repos}
+            jobs={jobs}
+            selectedJobId={selectedJob?.id}
+            selectedRepoId={selectedRepo?.id}
+            apiBase={API_BASE}
+            onRefreshData={loadInitialData}
+            onJobImported={(importedJob) => {
+              setJobs(prev => [importedJob, ...prev.filter(j => j.id !== importedJob.id)]);
+              setSelectedJob(importedJob);
+            }}
+            onJobSelected={(importedJob) => {
+              setSelectedJob(importedJob);
+            }}
+            onRepoConnected={(newRepo) => {
+              setRepos(prev => [...prev.filter(r => r.id !== newRepo.id), newRepo]);
+              setSelectedRepo(newRepo);
+            }}
+            onRepoSelected={(repo) => {
+              setSelectedRepo(repo);
+            }}
+            onRepoUnlinked={(id) => {
+              setRepos(prev => prev.filter(r => r.id !== id));
+              if (selectedRepo?.id === id) {
+                const remaining = repos.filter(r => r.id !== id);
+                setSelectedRepo(remaining.length > 0 ? remaining[0] : null);
+              }
+            }}
+            onAssessmentCompleted={(assessmentData) => {
+              setAssessmentResult(assessmentData);
+            }}
+            setFeedback={setFeedback}
+          />
         )}
 
         {page === 'evidence' && (

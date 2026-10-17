@@ -170,3 +170,33 @@ class GitHubScannerService:
                 )
 
         return snippets
+
+    @classmethod
+    async def list_user_repos(cls, username: str) -> List[Dict[str, Any]]:
+        """List public repositories for a given GitHub username, sorted by most recent push."""
+        clean_user = username.strip().lstrip("@")
+        url = f"{cls.BASE_URL}/users/{clean_user}/repos?sort=pushed&per_page=30"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, headers=cls._get_headers())
+                if resp.status_code == 200:
+                    repos = resp.json()
+                    results = []
+                    for r in repos:
+                        if not r.get("fork", False):  # Focus on original/source repos
+                            results.append({
+                                "full_name": r.get("full_name"),
+                                "name": r.get("name"),
+                                "description": r.get("description"),
+                                "language": r.get("language") or "Other",
+                                "stargazers_count": r.get("stargazers_count", 0),
+                                "default_branch": r.get("default_branch", "main"),
+                                "clone_url": r.get("clone_url"),
+                                "pushed_at": r.get("pushed_at"),
+                                "html_url": r.get("html_url")
+                            })
+                    return results
+                else:
+                    return []
+        except Exception as e:
+            return []

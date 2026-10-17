@@ -38,7 +38,11 @@ graph TB
     subgraph "External Services"
         GH["GitHub REST API<br/>OAuth · Repos · Trees · Blobs"]
         GHWH["GitHub Webhooks<br/>Push Events"]
-        JOB["Job Source API<br/>ATS / Scraper"]
+        JOB["Job Source Providers<br/>Naukri.com (Live Feed) · JSearch · Fallback Registry"]
+    end
+
+    subgraph "Multi-Repo Assessment Engine"
+        MRA["Multi-Repo Evaluator<br/>Concurreny Semaphore (3) · Deduplication · Merge Rules"]
     end
 
     FE -->|HTTPS| NGINX
@@ -46,7 +50,8 @@ graph TB
     NGINX --> WH
     API --> PG
     API --> REDIS
-    API --> AE
+    API --> MRA
+    MRA --> AE
     AE --> LLM
     AE --> VAL
     VAL --> PG
@@ -658,6 +663,60 @@ sequenceDiagram
     BG->>DB: INSERT evidence
     BG->>DB: INSERT assessment_changes<br/>(old_status → new_status)
     BG->>DB: UPDATE webhook_event<br/>status = 'completed'
+```
+
+### Multi-Repo Assessment & Naukri Integration Sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User / Candidate
+    participant FE as React Frontend (NaukriPage)
+    participant API as FastAPI Gateway
+    participant REG as Job Source Registry
+    participant NK as Naukri Provider / Fallback
+    participant MRA as Multi-Repo Assessment Engine
+    participant GH as GitHub Scanner Service
+    participant DB as SQLite / DB (SQLModel)
+
+    User->>FE: Enters Target Role & Filters ("Python Developer", Pune)
+    FE->>API: GET /api/v1/naukri/search?role=...
+    API->>REG: search_jobs(query, location, experience)
+    alt In-Memory Cache Valid (< 10 min)
+        REG-->>API: Return cached listings
+    else Cache Miss
+        REG->>NK: GET /jobapi/v3/search (headers: appid, systemid)
+        alt 403 / 429 Blocked / Rate-Limited
+            NK-->>REG: PermissionError / 403
+            REG->>REG: Fallback to JSearch / Curated Mock Provider
+        end
+        REG-->>API: (results, provider_name, cached)
+    end
+    API-->>FE: NaukriSearchResponse
+
+    User->>FE: Clicks "Assess my repos"
+    FE->>API: POST /api/v1/naukri/import (external_id, apply_url)
+    API->>DB: Check deduplication (source="naukri", external_id)
+    alt Already Imported
+        DB-->>API: Return existing Job + Requirements
+    else First Import
+        API->>REG: get_job_detail(external_id, apply_url)
+        API->>API: Extract requirements via LLM with fallback
+        API->>DB: Persist Job & Requirement rows
+    end
+    API-->>FE: JobResponse
+
+    FE->>API: POST /api/v1/assessments/run-multi (job_id, repo_ids: [1, 2, ...])
+    API->>MRA: Evaluate 1 Job x N Repos
+    loop For each Repo concurrently (Semaphore 3)
+        MRA->>GH: get_repo_tree() & fetch_file_content()
+        MRA->>MRA: evaluate_requirement() per skill
+    end
+    MRA->>MRA: Apply Deterministic Merge Rule:
+    Note over MRA: 1. Status Rank: MET > PARTIAL > NEEDS_REVIEW > UNMET<br/>2. Highest Confidence Score<br/>3. Union of citations across all repos tagged with repo_full_name
+    MRA->>DB: Persist per-repo Assessment, Citation, AuditHistory records
+    MRA-->>API: Aggregated AssessmentResponse + Per-Repo Breakdown
+    API-->>FE: Render Summary, Repo Contribution Bar & Source Permalinks
 ```
 
 ### Polling Fallback Mechanism

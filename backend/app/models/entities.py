@@ -27,6 +27,12 @@ class JobBase(SQLModel):
     company: Optional[str] = None
     source_url: Optional[str] = None
     raw_text: str
+    source: Optional[str] = None          # "naukri", "manual", "url"
+    external_id: Optional[str] = None     # external job ID from provider
+    location: Optional[str] = None
+    experience: Optional[str] = None
+    salary: Optional[str] = None
+    apply_url: Optional[str] = None
 
 
 class Job(JobBase, table=True):

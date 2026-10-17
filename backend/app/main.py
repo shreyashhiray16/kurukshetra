@@ -8,6 +8,7 @@ from app.api.jobs import router as jobs_router
 from app.api.repos import router as repos_router
 from app.api.assessments import router as assessments_router
 from app.api.webhooks import router as webhooks_router
+from app.api.naukri import router as naukri_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -23,10 +24,11 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Set up CORS directly (No Nginx proxy needed)
+# Set up CORS directly (Supports any local port like 5173, 5174, etc.)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -38,6 +40,7 @@ app.include_router(jobs_router, prefix=f"{settings.API_V1_STR}/jobs", tags=["Job
 app.include_router(repos_router, prefix=f"{settings.API_V1_STR}/repos", tags=["Repositories"])
 app.include_router(assessments_router, prefix=f"{settings.API_V1_STR}/assessments", tags=["Assessments"])
 app.include_router(webhooks_router, prefix=f"{settings.API_V1_STR}/webhooks", tags=["Webhooks"])
+app.include_router(naukri_router, prefix=f"{settings.API_V1_STR}/naukri", tags=["Naukri"])
 
 @app.get("/")
 def root():

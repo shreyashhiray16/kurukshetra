@@ -147,3 +147,32 @@ async def collect_repo_evidence(
 def list_repositories(session: Session = Depends(get_session)):
     """List all connected repositories."""
     return session.exec(select(Repository)).all()
+
+@router.get("/by-user/{username}")
+async def list_github_user_repos(username: str):
+    """List public repositories for a given GitHub username."""
+    clean_user = username.strip().lstrip("@")
+    if not clean_user:
+        raise HTTPException(status_code=400, detail="Username cannot be empty.")
+    repos = await GitHubScannerService.list_user_repos(clean_user)
+    return repos
+
+@router.delete("/{repo_id}")
+def unlink_repository(repo_id: int, session: Session = Depends(get_session)):
+    """Unlink/delete a connected repository (cascade-safe with assessment cleanup)."""
+    repo = session.exec(select(Repository).where(Repository.id == repo_id)).first()
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repository not found.")
+
+    from app.models.entities import Assessment, Citation
+    # Find all assessments for this repo
+    assessments = session.exec(select(Assessment).where(Assessment.repo_id == repo.id)).all()
+    for assess in assessments:
+        citations = session.exec(select(Citation).where(Citation.assessment_id == assess.id)).all()
+        for c in citations:
+            session.delete(c)
+        session.delete(assess)
+
+    session.delete(repo)
+    session.commit()
+    return {"status": "success", "message": f"Repository '{repo.full_name}' unlinked successfully."}

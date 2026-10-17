@@ -27,53 +27,14 @@ async def import_job(payload: JobImportRequest, session: Session = Depends(get_s
     if not raw_text or len(raw_text.strip()) < 20:
         raise HTTPException(status_code=400, detail="The job listing text is too short or empty.")
 
-    # Extract structured requirements using Gemini (with fallback)
-    extracted = JobExtractorService.extract_requirements(raw_text, payload.source_url)
-
-    # Persist Job record
-    job = Job(
-        title=extracted.title,
-        company=extracted.company,
+    from app.services.job_importer import persist_job_and_requirements
+    return persist_job_and_requirements(
+        session=session,
+        raw_text=raw_text,
         source_url=payload.source_url,
-        raw_text=raw_text
-    )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-
-    # Persist Requirements
-    req_dicts = []
-    for req in extracted.requirements:
-        db_req = Requirement(
-            job_id=job.id,
-            title=req.title,
-            category=req.category,
-            requirement_type=req.requirement_type,
-            weight=req.weight,
-            source_snippet=req.source_snippet
-        )
-        session.add(db_req)
-        session.commit()
-        session.refresh(db_req)
-        req_dicts.append({
-            "id": db_req.id,
-            "title": db_req.title,
-            "category": db_req.category,
-            "requirement_type": db_req.requirement_type.value,
-            "weight": db_req.weight,
-            "source_snippet": db_req.source_snippet
-        })
-
-    return JobResponse(
-        id=job.id,
-        title=job.title,
-        company=job.company,
-        source_url=job.source_url,
-        raw_text=job.raw_text,
-        created_at=job.created_at,
-        requirements=req_dicts,
-        extraction_source=JobExtractorService.last_source,
-        llm_model=JobExtractorService.last_model,
+        source="manual",
+        external_id=None,
+        apply_url=payload.source_url
     )
 
 @router.get("/{job_id}", response_model=JobResponse)

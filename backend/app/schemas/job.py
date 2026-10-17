@@ -29,3 +29,42 @@ class JobResponse(BaseModel):
     requirements: List[dict]
     extraction_source: Optional[str] = None
     llm_model: Optional[str] = None
+    source: Optional[str] = None
+    external_id: Optional[str] = None
+    location: Optional[str] = None
+    experience: Optional[str] = None
+    salary: Optional[str] = None
+    apply_url: Optional[str] = None
+
+class JobListing(BaseModel):
+    external_id: str
+    source: str = "naukri"
+    title: str
+    company: Optional[str] = None
+    location: Optional[str] = None
+    experience: Optional[str] = None
+    salary: Optional[str] = None
+    posted: Optional[str] = None
+    skills: List[str] = []
+    snippet: Optional[str] = None
+    apply_url: str
+    logo_url: Optional[str] = None
+
+class NaukriSearchResponse(BaseModel):
+    query: str
+    location: Optional[str] = None
+    page: int
+    total: Optional[int] = None
+    provider: str
+    cached: bool
+    results: List[JobListing]
+
+class NaukriImportRequest(BaseModel):
+    external_id: str
+    apply_url: str
+    title: str
+    company: Optional[str] = None
+    snippet: Optional[str] = None
+    location: Optional[str] = None
+    experience: Optional[str] = None
+    salary: Optional[str] = None

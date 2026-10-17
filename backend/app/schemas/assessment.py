@@ -11,6 +11,7 @@ class CitationItem(BaseModel):
     snippet_text: str
     github_url: Optional[str] = None
     is_dependency_or_doc_only: bool = False
+    repo_full_name: Optional[str] = None
 
 class SkillAssessmentResult(BaseModel):
     requirement_id: int
@@ -28,10 +29,23 @@ class SkillAssessmentResult(BaseModel):
     llm_used: bool = False
     llm_model: Optional[str] = None
     llm_response: Optional[dict] = None
+    winning_repo: Optional[str] = None
+    evidence_repos: List[str] = []
 
 class AssessmentRunRequest(BaseModel):
     job_id: int
     repo_id: int
+
+class MultiRepoAssessmentRunRequest(BaseModel):
+    job_id: int
+    repo_ids: List[int]
+
+class RepoContribution(BaseModel):
+    repo_id: int
+    repo_full_name: str
+    skills_met: int
+    skills_partial: int
+    score_percentage: float
 
 class AssessmentSummary(BaseModel):
     total_skills: int
@@ -50,3 +64,5 @@ class AssessmentResponse(BaseModel):
     evaluated_at: datetime
     summary: AssessmentSummary
     skill_assessments: List[SkillAssessmentResult]
+    repos: Optional[List[str]] = None
+    repo_contributions: Optional[List[RepoContribution]] = None
