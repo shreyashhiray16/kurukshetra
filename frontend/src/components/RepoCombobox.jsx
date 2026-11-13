@@ -2,6 +2,13 @@ import React, { useState, useEffect, useRef, useId } from 'react';
 import { ChevronDown, AlertCircle, Loader2, GitBranch, Check, X } from 'lucide-react';
 import { parseGithubRepo } from '../utils/parseGithubRepo.js';
 
+function getRepoDisplayValue(repo, demoMode) {
+  if (demoMode) return repo.full_name;
+  const shaShort = repo.latest_commit_sha ? repo.latest_commit_sha.slice(0, 7) : 'HEAD';
+  const branch = repo.default_branch || 'main';
+  return `${repo.full_name} (${branch}) - SHA: ${shaShort}`;
+}
+
 /**
  * RepoCombobox
  * 
@@ -26,7 +33,8 @@ export default function RepoCombobox({
   selectedRepo,
   onChange,
   onValidationChange,
-  apiBase = "http://127.0.0.1:8000/api/v1"
+  apiBase = "http://127.0.0.1:8000/api/v1",
+  demoMode = false,
 }) {
   const [inputValue, setInputValue] = useState('');
   const [isOpen, setIsOpen] = useState(false);
@@ -57,24 +65,24 @@ export default function RepoCombobox({
   // Sync display text when selectedRepo changes externally
   useEffect(() => {
     if (selectedRepo) {
-      const shaShort = selectedRepo.latest_commit_sha ? selectedRepo.latest_commit_sha.slice(0, 7) : 'HEAD';
-      const branch = selectedRepo.default_branch || 'main';
-      setInputValue(`${selectedRepo.full_name} (${branch}) - SHA: ${shaShort}`);
+      setInputValue(getRepoDisplayValue(selectedRepo, demoMode));
       setValidationError('');
       setResolveError('');
       if (onValidationChange) onValidationChange(true);
     } else {
       if (onValidationChange) onValidationChange(false);
     }
-  }, [selectedRepo, onValidationChange]);
+  }, [selectedRepo, onValidationChange, demoMode]);
 
   // Combine parent repos with saved local history (de-duplicated by full_name, most recent first)
   const combinedRepos = React.useMemo(() => {
     const map = new Map();
     // Local history first (most recent)
-    localHistory.forEach(r => {
-      if (r && r.full_name) map.set(r.full_name.toLowerCase(), r);
-    });
+    if (!demoMode) {
+      localHistory.forEach(r => {
+        if (r && r.full_name) map.set(r.full_name.toLowerCase(), r);
+      });
+    }
     // Then props repos
     repos.forEach(r => {
       if (r && r.full_name && !map.has(r.full_name.toLowerCase())) {
@@ -82,7 +90,7 @@ export default function RepoCombobox({
       }
     });
     return Array.from(map.values());
-  }, [repos, localHistory]);
+  }, [repos, localHistory, demoMode]);
 
   // Filter items based on current raw input (prioritize matching full_name or owner/repo)
   const filteredRepos = React.useMemo(() => {
@@ -158,6 +166,21 @@ export default function RepoCombobox({
       setValidationError("Enter owner/repo or a GitHub URL");
       setResolveError('');
       if (onValidationChange) onValidationChange(false);
+      return;
+    }
+
+    if (demoMode) {
+      const sampleRepo = combinedRepos.find(repo => repo.full_name.toLowerCase() === parsed.fullName.toLowerCase());
+      if (!sampleRepo) {
+        setResolveError("Demo mode only lets you select the listed sample repositories; no GitHub request was made.");
+        if (onValidationChange) onValidationChange(false);
+        return;
+      }
+      setInputValue(sampleRepo.full_name);
+      setResolveError('');
+      setValidationError('');
+      if (onChange) onChange(sampleRepo);
+      if (onValidationChange) onValidationChange(true);
       return;
     }
 
@@ -256,11 +279,9 @@ export default function RepoCombobox({
     setResolveError('');
     cancelActiveLookup();
 
-    const shaShort = repo.latest_commit_sha ? repo.latest_commit_sha.slice(0, 7) : 'HEAD';
-    const branch = repo.default_branch || 'main';
-    setInputValue(`${repo.full_name} (${branch}) - SHA: ${shaShort}`);
+    setInputValue(getRepoDisplayValue(repo, demoMode));
 
-    persistRepo(repo);
+    if (!demoMode) persistRepo(repo);
     if (onChange) onChange(repo);
     if (onValidationChange) onValidationChange(true);
   };
@@ -328,9 +349,7 @@ export default function RepoCombobox({
       }
     } else {
       if (selectedRepo) {
-        const shaShort = selectedRepo.latest_commit_sha ? selectedRepo.latest_commit_sha.slice(0, 7) : 'HEAD';
-        const branch = selectedRepo.default_branch || 'main';
-        setInputValue(`${selectedRepo.full_name} (${branch}) - SHA: ${shaShort}`);
+        setInputValue(getRepoDisplayValue(selectedRepo, demoMode));
         setValidationError('');
         if (onValidationChange) onValidationChange(true);
       } else {
@@ -497,7 +516,6 @@ export default function RepoCombobox({
             filteredRepos.map((repo, idx) => {
               const isSelected = selectedRepo && selectedRepo.id === repo.id;
               const isHighlighted = highlightedIndex === idx;
-              const shaShort = repo.latest_commit_sha ? repo.latest_commit_sha.slice(0, 7) : 'HEAD';
               const branch = repo.default_branch || 'main';
 
               return (
@@ -524,7 +542,7 @@ export default function RepoCombobox({
                     <GitBranch size={14} color="var(--text-dim)" />
                     <span style={{ fontWeight: 600 }}>{repo.full_name}</span>
                     <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>({branch})</span>
-                    <span style={{ color: 'var(--text-dim)', fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>SHA: {shaShort}</span>
+                    <span style={{ color: 'var(--text-dim)', fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>{demoMode ? 'Demo sample · not connected' : `SHA: ${repo.latest_commit_sha ? repo.latest_commit_sha.slice(0, 7) : 'HEAD'}`}</span>
                   </div>
                   {isSelected && <Check size={14} color="var(--status-cyan)" />}
                 </li>
@@ -539,7 +557,7 @@ export default function RepoCombobox({
                 textAlign: 'center'
               }}
             >
-              {inputValue.trim() ? "Press Enter to connect repository" : "No saved repositories"}
+              {demoMode ? (inputValue.trim() ? "Not a listed sample; no GitHub lookup will run" : "Choose one of the listed demo repositories") : (inputValue.trim() ? "Press Enter to connect repository" : "No saved repositories")}
             </li>
           )}
         </ul>

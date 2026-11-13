@@ -1,5 +1,21 @@
 # React + Vite
 
+## Local demonstration mode
+
+`npm run dev` starts the site in local demo mode by default. The dashboard, sample job
+postings, candidate profile, repositories, skill-gap assessment, evidence examples, and
+15-day roadmap are loaded from `src/data/demoData.js`; this does not seed or modify the
+backend database. Demo repositories are placeholders and are not authenticated, scanned,
+or verified against GitHub. Demo assessment excerpts and scores are illustrative only.
+
+To use the live FastAPI backend while developing, set `VITE_DEMO_MODE=false` in the
+frontend environment and start the backend separately. `VITE_API_BASE_URL` can override
+the default `http://127.0.0.1:8000/api/v1` API URL. Demo mode is not enabled by default
+in production builds; set `VITE_DEMO_MODE=true` only when intentionally publishing a
+demonstration build.
+
+Run the frontend checks with `npm test`, `npm run lint`, and `npm run build`.
+
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
 Currently, two official plugins are available:

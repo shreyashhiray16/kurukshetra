@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Briefcase,
@@ -35,18 +35,55 @@ import {
 
 import RepoCombobox from './components/RepoCombobox.jsx';
 import { downloadReportAsPdf } from './utils/pdfGenerator.js';
+import {
+  DEMO_CANDIDATE,
+  DEMO_INITIAL_ROADMAP_PROGRESS,
+  DEMO_JOBS,
+  DEMO_REPOSITORIES,
+  DEMO_ROADMAP_STORAGE_KEY,
+  createDemoAssessment,
+  createDemoJobFromText,
+} from './data/demoData.js';
 
-const API_BASE = "http://127.0.0.1:8000/api/v1";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
+const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === 'true'
+  || (import.meta.env.DEV && import.meta.env.VITE_DEMO_MODE !== 'false');
+
+async function fetchApiJson(path) {
+  const response = await fetch(`${API_BASE}${path}`);
+  if (!response.ok) {
+    throw new Error(`Backend request ${path} failed with HTTP ${response.status}.`);
+  }
+  return response.json();
+}
+
+function getInitialRoadmapProgress() {
+  if (!DEMO_MODE) return {};
+  try {
+    const stored = JSON.parse(localStorage.getItem(DEMO_ROADMAP_STORAGE_KEY) || '{}');
+    return { ...DEMO_INITIAL_ROADMAP_PROGRESS, ...stored };
+  } catch (error) {
+    console.warn('Could not load demo roadmap progress:', error);
+    return DEMO_INITIAL_ROADMAP_PROGRESS;
+  }
+}
 
 export default function App() {
-  const [jobs, setJobs] = useState([]);
-  const [repos, setRepos] = useState([]);
-  const [selectedJob, setSelectedJob] = useState(null);
-  const [selectedRepo, setSelectedRepo] = useState(null);
+  const [jobs, setJobs] = useState(() => DEMO_MODE ? DEMO_JOBS : []);
+  const [repos, setRepos] = useState(() => DEMO_MODE ? DEMO_REPOSITORIES : []);
+  const [selectedJob, setSelectedJob] = useState(() => DEMO_MODE ? DEMO_JOBS[0] : null);
+  const [selectedRepo, setSelectedRepo] = useState(() => DEMO_MODE ? DEMO_REPOSITORIES[0] : null);
   const [isRepoValid, setIsRepoValid] = useState(true);
-  const [assessmentResult, setAssessmentResult] = useState(null);
+  const handleRepoValidationChange = useCallback(isValid => setIsRepoValid(isValid), []);
+  const [assessmentResult, setAssessmentResult] = useState(() => (
+    DEMO_MODE ? createDemoAssessment(DEMO_JOBS[0], DEMO_REPOSITORIES[0]) : null
+  ));
   const [events, setEvents] = useState([]);
   const [history, setHistory] = useState([]);
+  const [roadmapProgress, setRoadmapProgress] = useState(getInitialRoadmapProgress);
+  const [jobSearch, setJobSearch] = useState('');
+  const [jobLocationFilter, setJobLocationFilter] = useState('all');
+  const [jobExperienceFilter, setJobExperienceFilter] = useState('all');
   const [llmTest, setLlmTest] = useState(null);
   const [loading, setLoading] = useState(false);
   const location = useLocation();
@@ -77,16 +114,20 @@ Responsibilities:
 - Package container images with Docker and orchestrate workloads.
 - Write robust integration test suites and CI pipelines.`);
   const [sourceUrl, setSourceUrl] = useState("https://example.com/careers/staff-ai-engineer");
-  const [newRepoFullName, setNewRepoFullName] = useState("tiangolo/fastapi");
+  const [newRepoFullName, setNewRepoFullName] = useState(
+    DEMO_MODE ? DEMO_REPOSITORIES[0].full_name : "tiangolo/fastapi"
+  );
 
   const [feedback, setFeedback] = useState(null); // { type: 'success' | 'error', message: string }
 
   useEffect(() => {
+    if (DEMO_MODE) return;
     loadInitialData();
     checkGeminiConfig();
   }, []);
 
   async function checkGeminiConfig() {
+    if (DEMO_MODE) return;
     try {
       const res = await fetch(`${API_BASE}/config`).then(r => r.json());
       setGeminiConfigured(res.gemini_configured);
@@ -98,6 +139,10 @@ Responsibilities:
 
   async function handleSaveGeminiKey(e) {
     if (e && e.preventDefault) e.preventDefault();
+    if (DEMO_MODE) {
+      setFeedback({ type: 'error', message: "Demo mode does not contact the backend or configure external AI services." });
+      return;
+    }
     if (!inputGeminiKey.trim()) {
       setFeedback({ type: 'error', message: "Please provide a valid Gemini API Key." });
       return;
@@ -124,26 +169,31 @@ Responsibilities:
   }
 
   async function loadInitialData() {
+    if (DEMO_MODE) return;
     try {
       setLoading(true);
       setError(null);
       const [jobsRes, reposRes, eventsRes, historyRes] = await Promise.all([
-        fetch(`${API_BASE}/jobs/`).then(r => r.json()).catch(() => []),
-        fetch(`${API_BASE}/repos/`).then(r => r.json()).catch(() => []),
-        fetch(`${API_BASE}/webhooks/events`).then(r => r.json()).catch(() => []),
-        fetch(`${API_BASE}/assessments/history`).then(r => r.json()).catch(() => []),
+        fetchApiJson('/jobs/'),
+        fetchApiJson('/repos/'),
+        fetchApiJson('/webhooks/events'),
+        fetchApiJson('/assessments/history'),
       ]);
 
-      setJobs(Array.isArray(jobsRes) ? jobsRes : []);
-      setRepos(Array.isArray(reposRes) ? reposRes : []);
-      setEvents(Array.isArray(eventsRes) ? eventsRes : []);
-      setHistory(Array.isArray(historyRes) ? historyRes : []);
+      if (![jobsRes, reposRes, eventsRes, historyRes].every(Array.isArray)) {
+        throw new Error("The backend returned an unexpected data shape for its initial lists.");
+      }
+
+      setJobs(jobsRes);
+      setRepos(reposRes);
+      setEvents(eventsRes);
+      setHistory(historyRes);
 
       if (jobsRes.length > 0) setSelectedJob(jobsRes[0]);
       if (reposRes.length > 0) setSelectedRepo(reposRes[0]);
     } catch (err) {
       console.error(err);
-      setError("Failed to fetch initial backend state. Ensure FastAPI server is running on port 8000.");
+      setError(`Could not load backend data: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -153,6 +203,16 @@ Responsibilities:
     if (e && e.preventDefault) e.preventDefault();
     if (!newRepoFullName.trim()) {
       setFeedback({ type: 'error', message: "Please provide a valid repository name in 'owner/repo' format." });
+      return;
+    }
+    if (DEMO_MODE) {
+      const sampleRepo = repos.find(repo => repo.full_name.toLowerCase() === newRepoFullName.trim().toLowerCase());
+      if (!sampleRepo) {
+        setFeedback({ type: 'error', message: "Demo mode cannot verify or connect repositories. Select one of the listed sample repositories instead." });
+        return;
+      }
+      setSelectedRepo(sampleRepo);
+      setFeedback({ type: 'success', message: `Selected demo sample ${sampleRepo.full_name}; it is not connected to or verified by GitHub.` });
       return;
     }
     try {
@@ -185,6 +245,10 @@ Responsibilities:
       setFeedback({ type: 'error', message: "No repository selected to download." });
       return;
     }
+    if (DEMO_MODE) {
+      setFeedback({ type: 'error', message: "This illustrative repository is not connected to GitHub, so no archive is available in demo mode." });
+      return;
+    }
     const ref = target.latest_commit_sha || target.default_branch || 'main';
     const downloadUrl = `https://github.com/${target.full_name}/archive/${ref}.zip`;
     window.open(downloadUrl, '_blank', 'noopener,noreferrer');
@@ -198,6 +262,14 @@ Responsibilities:
     if (e && e.preventDefault) e.preventDefault();
     if (!rawJobText.trim()) {
       setFeedback({ type: 'error', message: "Please enter or paste job description text." });
+      return;
+    }
+    if (DEMO_MODE) {
+      const importedJob = createDemoJobFromText(rawJobText.trim(), Math.max(...jobs.map(job => job.id), 1000) + 1);
+      setJobs(prev => [importedJob, ...prev]);
+      setSelectedJob(importedJob);
+      setAssessmentResult(createDemoAssessment(importedJob, selectedRepo || DEMO_REPOSITORIES[0]));
+      setFeedback({ type: 'success', message: "Added a local demo role using basic text matching; no backend, scraper, or AI service was used." });
       return;
     }
     try {
@@ -231,6 +303,11 @@ Responsibilities:
       setFeedback({ type: 'error', message: "Please select both a Target Job and a Connected Repository from the dropdowns above." });
       return;
     }
+    if (DEMO_MODE) {
+      setAssessmentResult(createDemoAssessment(selectedJob, selectedRepo));
+      setFeedback({ type: 'success', message: `Illustrative demo assessment ready for ${selectedJob.title} and ${selectedRepo.full_name}. No GitHub repository was scanned.` });
+      return;
+    }
     try {
       setLoading(true);
       setError(null);
@@ -259,6 +336,10 @@ Responsibilities:
       setFeedback({ type: 'error', message: "Please select a repository to poll." });
       return;
     }
+    if (DEMO_MODE) {
+      setFeedback({ type: 'error', message: "Repository polling is unavailable for sample repositories; no GitHub connection was made." });
+      return;
+    }
     try {
       setLoading(true);
       setError(null);
@@ -273,6 +354,34 @@ Responsibilities:
       setLoading(false);
     }
   }
+
+  function handleRoadmapTaskToggle(day) {
+    const next = {
+      ...roadmapProgress,
+      [day]: roadmapProgress[day] === 'completed' ? 'upcoming' : 'completed',
+    };
+    setRoadmapProgress(next);
+    try {
+      localStorage.setItem(DEMO_ROADMAP_STORAGE_KEY, JSON.stringify(next));
+    } catch (error) {
+      console.warn('Could not save demo roadmap progress:', error);
+      setFeedback({ type: 'error', message: "Roadmap progress changed for this session but could not be saved in this browser." });
+    }
+  }
+
+  const filteredJobs = (DEMO_MODE ? DEMO_JOBS : jobs).filter(job => {
+    const query = jobSearch.trim().toLowerCase();
+    const matchesQuery = !query || [
+      job.title,
+      job.company,
+      job.location,
+      job.description,
+      ...(job.required_skills || []),
+    ].some(value => String(value || '').toLowerCase().includes(query));
+    const matchesLocation = jobLocationFilter === 'all' || job.location === jobLocationFilter;
+    const matchesExperience = jobExperienceFilter === 'all' || job.experience === jobExperienceFilter;
+    return matchesQuery && matchesLocation && matchesExperience;
+  });
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -303,7 +412,7 @@ Responsibilities:
             </div>
             <div>
               <h1 style={{ fontSize: '1.2rem', lineHeight: 1.2 }}>AI Career Coach</h1>
-              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Deterministic Skill Verification & Gap Analysis</p>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{DEMO_MODE ? 'Illustrative Local Career Demo' : 'Deterministic Skill Verification & Gap Analysis'}</p>
             </div>
           </div>
 
@@ -325,6 +434,12 @@ Responsibilities:
 
       {/* Main Content Area */}
       <main style={{ maxWidth: 1400, margin: '0 auto', padding: '28px 32px', width: '100%', flex: 1 }}>
+
+        {DEMO_MODE && (
+          <div role="status" className="glass-panel" style={{ padding: '12px 18px', marginBottom: 18, borderColor: 'var(--status-partial-border)', background: 'var(--status-partial-bg)', color: 'var(--text-main)' }}>
+            <strong>Local demo mode</strong> · Sample jobs, candidate details, repositories, evidence, and scores are illustrative only. No sample repository is connected to or verified by GitHub.
+          </div>
+        )}
 
         {/* Selection Bar */}
         <section className="glass-panel" style={{ padding: '18px 24px', marginBottom: 28, display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -358,14 +473,15 @@ Responsibilities:
 
           <div style={{ flex: 1, minWidth: 260 }}>
             <label htmlFor="select-repo-combobox" style={{ display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6, fontWeight: 700 }}>
-              2. Connected GitHub Repository
+              {DEMO_MODE ? '2. Sample Repository (not connected)' : '2. Connected GitHub Repository'}
             </label>
             <RepoCombobox
               repos={repos}
               selectedRepo={selectedRepo}
               onChange={repo => setSelectedRepo(repo)}
-              onValidationChange={isValid => setIsRepoValid(isValid)}
+              onValidationChange={handleRepoValidationChange}
               apiBase={API_BASE}
+              demoMode={DEMO_MODE}
             />
           </div>
 
@@ -376,12 +492,12 @@ Responsibilities:
               disabled={loading || !selectedJob || !selectedRepo || !isRepoValid}
               className="btn btn-primary"
             >
-              <Zap size={16} /> Run Full Assessment
+              <Zap size={16} /> {DEMO_MODE ? 'Show Demo Assessment' : 'Run Full Assessment'}
             </button>
             <button
               id="poll-repo-btn"
               onClick={handleTriggerPoll}
-              disabled={loading || !selectedRepo || !isRepoValid}
+              disabled={loading || !selectedRepo || !isRepoValid || DEMO_MODE}
               className="btn btn-secondary"
               title="Poll GitHub for latest commit changes"
             >
@@ -469,8 +585,8 @@ Responsibilities:
         {page === 'dashboard' && (
           <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 18 }}>
             {[
-              ['Jobs imported', jobs.length],
-              ['Repositories', repos.length],
+              ['Target job profiles', jobs.length],
+              ['Sample repositories', repos.length],
               ['Webhook events', events.length],
               ['Status changes', history.length],
             ].map(([label, value]) => (
@@ -482,7 +598,12 @@ Responsibilities:
             <div className="glass-panel" style={{ padding: 22, gridColumn: '1 / -1' }}>
               <h2 style={{ fontSize: '1.1rem', marginBottom: 8 }}>Latest assessment</h2>
               {assessmentResult ? (
-                <p>{assessmentResult.job_title} against {assessmentResult.repo_full_name}: {assessmentResult.summary?.overall_match_percentage}% match. {assessmentResult.skill_assessments?.filter(s => s.llm_used).length || 0} skills decided by Gemini.</p>
+                <>
+                  <p>{assessmentResult.job_title} against {assessmentResult.repo_full_name}: {assessmentResult.summary?.overall_match_percentage}% match. {DEMO_MODE ? 'Illustrative sample assessment; no repository was scanned.' : `${assessmentResult.skill_assessments?.filter(s => s.llm_used).length || 0} skills decided by Gemini.`}</p>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.86rem', marginTop: 5 }}>
+                    Skill summary: {assessmentResult.summary?.met} demonstrated · {assessmentResult.summary?.partial} partial · {assessmentResult.summary?.unmet} gaps
+                  </p>
+                </>
               ) : (
                 <p style={{ color: 'var(--text-muted)' }}>No assessment yet. Import a job, connect a repository, then open Skill Gap.</p>
               )}
@@ -491,6 +612,49 @@ Responsibilities:
                 <button className="btn btn-secondary" onClick={() => navigate('/settings')}><Sparkles size={15} /> Gemini settings</button>
               </div>
             </div>
+            {DEMO_MODE && (
+              <>
+                <div className="glass-panel" style={{ padding: 22, gridColumn: '1 / -1' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>Candidate snapshot · illustrative</div>
+                      <h2 style={{ fontSize: '1.2rem', marginTop: 4 }}>{DEMO_CANDIDATE.name}</h2>
+                      <p style={{ color: 'var(--text-muted)', marginTop: 2 }}>{DEMO_CANDIDATE.headline} · {DEMO_CANDIDATE.location}</p>
+                      <p style={{ color: 'var(--text-dim)', marginTop: 8, maxWidth: 760 }}>{DEMO_CANDIDATE.summary}</p>
+                    </div>
+                    <div style={{ display: 'flex', gap: 24 }}>
+                      <div><div style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>PROJECTS</div><strong style={{ fontSize: '1.5rem' }}>{DEMO_CANDIDATE.project_count}</strong></div>
+                      <div><div style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>ASSESSMENTS</div><strong style={{ fontSize: '1.5rem' }}>{DEMO_CANDIDATE.completed_assessments}</strong></div>
+                      <div><div style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>ROLE MATCH</div><strong style={{ fontSize: '1.5rem', color: 'var(--accent-primary)' }}>{assessmentResult?.summary?.overall_match_percentage ?? 0}%</strong></div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 16 }}>
+                    {DEMO_CANDIDATE.projects.map(project => (
+                      <span key={project.repository} className="badge badge-cyan" title={project.focus}>{project.name} · {project.repository}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className="glass-panel" style={{ padding: 22, gridColumn: '1 / -1' }}>
+                  <h2 style={{ fontSize: '1.05rem', marginBottom: 14 }}>Skill readiness snapshot <span style={{ fontSize: '0.78rem', color: 'var(--text-dim)', fontWeight: 400 }}>· sample estimates, not verified evidence</span></h2>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16 }}>
+                    {DEMO_CANDIDATE.skill_scores.map(skill => (
+                      <div key={skill.skill}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.84rem', marginBottom: 5 }}><strong>{skill.skill}</strong><span>{skill.score}%</span></div>
+                        <div style={{ height: 7, borderRadius: 999, background: 'var(--bg-secondary)', overflow: 'hidden' }}><div style={{ width: `${skill.score}%`, height: '100%', background: 'var(--accent-primary)', borderRadius: 999 }} /></div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="glass-panel" style={{ padding: 22, gridColumn: '1 / -1' }}>
+                  <h2 style={{ fontSize: '1.05rem', marginBottom: 12 }}>Repository catalog statistics <span style={{ fontSize: '0.78rem', color: 'var(--text-dim)', fontWeight: 400 }}>· demo-only</span></h2>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24 }}>
+                    <div><strong style={{ fontSize: '1.25rem' }}>{DEMO_REPOSITORIES.length}</strong><div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>sample repositories</div></div>
+                    <div><strong style={{ fontSize: '1.25rem' }}>{new Set(DEMO_REPOSITORIES.flatMap(repo => repo.languages)).size}</strong><div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>language / toolchain labels</div></div>
+                    <div><strong style={{ fontSize: '1.25rem' }}>0</strong><div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>connected to GitHub</div></div>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -520,7 +684,7 @@ Responsibilities:
                       {assessmentResult.summary?.met}
                     </div>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginTop: 4 }}>
-                      Verified in executable code
+                      {DEMO_MODE ? 'Illustrative sample evidence' : 'Verified in executable code'}
                     </div>
                   </div>
 
@@ -569,7 +733,7 @@ Responsibilities:
                           Personalized 15-Day Implementation Roadmap Available
                         </div>
                         <div style={{ fontSize: '0.84rem', color: 'var(--text-muted)' }}>
-                          Custom step-by-step daily code milestones tailored to your {assessmentResult.repo_full_name} gaps with verified video references.
+                          {DEMO_MODE ? 'Sample learning milestones based on the displayed skill gaps.' : `Custom step-by-step daily code milestones tailored to your ${assessmentResult.repo_full_name} gaps with verified video references.`}
                         </div>
                       </div>
                     </div>
@@ -584,8 +748,13 @@ Responsibilities:
 
                   {/* Skill Assessments List */}
                   <h2 style={{ fontSize: '1.25rem', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Layers size={20} color="var(--accent-primary)" /> Skill Breakdown & Verified Citations
+                    <Layers size={20} color="var(--accent-primary)" /> Skill Breakdown & {DEMO_MODE ? 'Sample Evidence' : 'Verified Citations'}
                   </h2>
+                  {DEMO_MODE && (
+                    <div className="glass-panel" style={{ padding: 16, marginBottom: 16, background: 'var(--status-partial-bg)', borderColor: 'var(--status-partial-border)' }}>
+                      <strong>Illustrative assessment only.</strong> Sample excerpts and scores are not sourced from the listed repositories and have not been verified against GitHub.
+                    </div>
+                  )}
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                   {assessmentResult.skill_assessments?.map(skill => {
@@ -771,16 +940,38 @@ Responsibilities:
                     );
                   })}
                 </div>
+                {DEMO_MODE && (
+                  <div className="glass-panel" style={{ padding: 18, marginTop: 20 }}>
+                    <h3 style={{ fontSize: '1rem', marginBottom: 10 }}>Sample repositories available for assessment</h3>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {repos.map(repo => (
+                        <button
+                          key={repo.id}
+                          type="button"
+                          className={selectedRepo?.id === repo.id ? 'btn btn-primary' : 'btn btn-secondary'}
+                          onClick={() => {
+                            setSelectedRepo(repo);
+                            setAssessmentResult(createDemoAssessment(selectedJob, repo));
+                          }}
+                          title="Demo sample only; not connected to GitHub"
+                        >
+                          {repo.full_name}
+                        </button>
+                      ))}
+                    </div>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 10 }}>Selecting a sample updates the illustrative skill assessment and roadmap locally.</p>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="glass-panel" style={{ padding: 48, textAlign: 'center' }}>
                 <Briefcase size={44} color="var(--accent-primary)" style={{ margin: '0 auto 16px auto', display: 'block' }} />
                 <h3 style={{ fontSize: '1.25rem', marginBottom: 8 }}>Ready for Skill Verification</h3>
                 <p style={{ color: 'var(--text-muted)', maxWidth: 500, margin: '0 auto 20px auto', fontSize: '0.92rem' }}>
-                  Select your target Job and connected Repository above, then click <strong>"Run Full Assessment"</strong> to run deterministic citation extraction and gap analysis.
+                  {DEMO_MODE ? 'Sample assessment results are available locally; select a target job and sample repository above to update them.' : 'Select your target Job and connected Repository above, then click "Run Full Assessment" to run deterministic citation extraction and gap analysis.'}
                 </p>
                 <button onClick={handleRunAssessment} className="btn btn-primary">
-                  <Zap size={16} /> Run Assessment Now
+                  <Zap size={16} /> {DEMO_MODE ? 'Show Demo Assessment' : 'Run Assessment Now'}
                 </button>
               </div>
             )}
@@ -856,6 +1047,18 @@ Responsibilities:
                     <Target size={18} color="var(--accent-primary)" style={{ flexShrink: 0 }} />
                     <span><strong>Expected Outcome:</strong> {assessmentResult.roadmap.expected_outcome}</span>
                   </div>
+                  {DEMO_MODE && (
+                    <div style={{ marginTop: 16 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', marginBottom: 6 }}>
+                        <strong>Roadmap progress</strong>
+                        <span>{Object.values(roadmapProgress).filter(status => status === 'completed').length} / 15 days complete</span>
+                      </div>
+                      <div role="progressbar" aria-label="Demo roadmap completion" aria-valuemin={0} aria-valuemax={15} aria-valuenow={Object.values(roadmapProgress).filter(status => status === 'completed').length} style={{ height: 8, borderRadius: 999, background: 'var(--bg-secondary)', overflow: 'hidden' }}>
+                        <div style={{ width: `${(Object.values(roadmapProgress).filter(status => status === 'completed').length / 15) * 100}%`, height: '100%', background: 'var(--accent-primary)' }} />
+                      </div>
+                      <p style={{ color: 'var(--text-dim)', fontSize: '0.76rem', marginTop: 5 }}>Mark a day complete to save progress in this browser.</p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Phases & Daily Tasks */}
@@ -912,6 +1115,17 @@ Responsibilities:
                                 }}>
                                   {task.target_skill}
                                 </span>
+                                {DEMO_MODE && (
+                                  <button
+                                    type="button"
+                                    className={roadmapProgress[task.day] === 'completed' ? 'badge badge-met' : roadmapProgress[task.day] === 'in_progress' ? 'badge badge-partial' : 'badge badge-cyan'}
+                                    onClick={() => handleRoadmapTaskToggle(task.day)}
+                                    aria-label={`${roadmapProgress[task.day] === 'completed' ? 'Mark day' : 'Complete day'} ${task.day}`}
+                                    style={{ cursor: 'pointer', fontFamily: 'inherit' }}
+                                  >
+                                    {roadmapProgress[task.day] === 'completed' ? 'Completed' : roadmapProgress[task.day] === 'in_progress' ? 'In progress · mark done' : 'Upcoming · mark done'}
+                                  </button>
+                                )}
                               </div>
 
                               <h4 style={{ fontSize: '0.98rem', marginBottom: 6 }}>{task.day_title}</h4>
@@ -1009,6 +1223,89 @@ Responsibilities:
         {/* TAB 2: IMPORT FORM */}
         {page === 'jobs' && (
           <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: 24 }}>
+            {DEMO_MODE && (
+              <section className="glass-panel" style={{ padding: 24, gridColumn: '1 / -1' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', marginBottom: 18 }}>
+                  <div>
+                    <h2 style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Briefcase size={20} color="var(--accent-primary)" /> Naukri Hub · sample opportunities
+                    </h2>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.86rem', marginTop: 4 }}>Illustrative postings for local demonstration; these are not live listings.</p>
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <input
+                      id="job-search-input"
+                      type="search"
+                      aria-label="Search sample jobs"
+                      placeholder="Search title, company, or skill"
+                      value={jobSearch}
+                      onChange={event => setJobSearch(event.target.value)}
+                      style={{ minWidth: 240, padding: '9px 12px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-secondary)', color: 'var(--text-main)' }}
+                    />
+                    <select
+                      id="job-location-filter"
+                      aria-label="Filter sample jobs by location"
+                      value={jobLocationFilter}
+                      onChange={event => setJobLocationFilter(event.target.value)}
+                      style={{ padding: '9px 12px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-secondary)', color: 'var(--text-main)' }}
+                    >
+                      <option value="all">All locations</option>
+                      {[...new Set((DEMO_MODE ? DEMO_JOBS : jobs).map(job => job.location).filter(Boolean))].map(locationName => (
+                        <option key={locationName} value={locationName}>{locationName}</option>
+                      ))}
+                    </select>
+                    <select
+                      id="job-experience-filter"
+                      aria-label="Filter sample jobs by experience"
+                      value={jobExperienceFilter}
+                      onChange={event => setJobExperienceFilter(event.target.value)}
+                      style={{ padding: '9px 12px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-secondary)', color: 'var(--text-main)' }}
+                    >
+                      <option value="all">All experience levels</option>
+                      {[...new Set((DEMO_MODE ? DEMO_JOBS : jobs).map(job => job.experience).filter(Boolean))].map(experience => (
+                        <option key={experience} value={experience}>{experience}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14 }}>
+                  {filteredJobs.map(job => (
+                    <article key={job.id} style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', padding: 18, background: '#fff', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <div>
+                        <h3 style={{ fontSize: '1rem' }}>{job.title}</h3>
+                        <div style={{ fontSize: '0.86rem', fontWeight: 600, color: 'var(--accent-primary)', marginTop: 2 }}>{job.company}</div>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+                        {[job.location, job.experience, job.salary].map((detail, index) => (
+                          <span key={`${job.id}-${index}`} className="badge badge-cyan">{detail}</span>
+                        ))}
+                      </div>
+                      <p style={{ color: 'var(--text-muted)', fontSize: '0.84rem', flex: 1 }}>{job.description}</p>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {job.required_skills.map(skill => <span key={skill} className="badge badge-partial" style={{ textTransform: 'none' }}>{skill}</span>)}
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => {
+                          setSelectedJob(job);
+                          if (selectedRepo) setAssessmentResult(createDemoAssessment(job, selectedRepo));
+                          setFeedback({ type: 'success', message: `${job.title} selected as the demo target profile.` });
+                          navigate('/gap');
+                        }}
+                      >
+                        Use as target profile <ChevronRight size={15} />
+                      </button>
+                    </article>
+                  ))}
+                  {filteredJobs.length === 0 && (
+                    <p role="status" style={{ gridColumn: '1 / -1', padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>No sample jobs match those filters.</p>
+                  )}
+                </div>
+              </section>
+            )}
+
             {/* Import Job */}
             <div className="glass-panel" style={{ padding: 24 }}>
               <h3 style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1066,7 +1363,7 @@ Responsibilities:
             {/* Connect Repository */}
             <div className="glass-panel" style={{ padding: 24 }}>
               <h3 style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <GitBranch size={20} color="var(--accent-primary)" /> Connect GitHub Repository
+                <GitBranch size={20} color="var(--accent-primary)" /> {DEMO_MODE ? 'Choose a sample GitHub repository' : 'Connect GitHub Repository'}
               </h3>
               <form onSubmit={handleConnectRepo}>
                 <div style={{ marginBottom: 18 }}>
@@ -1091,18 +1388,18 @@ Responsibilities:
                   />
                 </div>
                 <button id="submit-connect-repo-btn" type="submit" disabled={loading} className="btn btn-primary" style={{ width: '100%', marginBottom: 20 }}>
-                  <ShieldCheck size={16} /> Connect & Scan Repository Tree
+                  <ShieldCheck size={16} /> {DEMO_MODE ? 'Select listed sample' : 'Connect & Scan Repository Tree'}
                 </button>
               </form>
 
-              <h4 style={{ fontSize: '0.9rem', marginBottom: 10, color: 'var(--text-muted)' }}>Connected Repositories ({repos.length})</h4>
+              <h4 style={{ fontSize: '0.9rem', marginBottom: 10, color: 'var(--text-muted)' }}>{DEMO_MODE ? `Demo repositories (${repos.length})` : `Connected Repositories (${repos.length})`}</h4>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {repos.map(r => (
                   <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
                     <div>
                       <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{r.full_name}</div>
                       <div className="mono" style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
-                        SHA: {r.latest_commit_sha ? r.latest_commit_sha.slice(0, 10) : 'HEAD'}
+                        {DEMO_MODE ? `Branch: ${r.default_branch} · ${(r.languages || [r.language]).join(', ')}` : `SHA: ${r.latest_commit_sha ? r.latest_commit_sha.slice(0, 10) : 'HEAD'}`}
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1126,7 +1423,7 @@ Responsibilities:
                       >
                         <Download size={13} /> ZIP
                       </button>
-                      <span className="badge badge-met">Active</span>
+                      <span className={`badge ${DEMO_MODE ? 'badge-cyan' : 'badge-met'}`}>{DEMO_MODE ? 'Demo only' : 'Active'}</span>
                     </div>
                   </div>
                 ))}
@@ -1140,19 +1437,20 @@ Responsibilities:
           <div className="animate-fade-in">
             <div className="glass-panel" style={{ padding: 24, maxWidth: 720 }}>
               <h3 style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <GitBranch size={20} color="var(--accent-primary)" /> Connect GitHub Repository
+                <GitBranch size={20} color="var(--accent-primary)" /> {DEMO_MODE ? 'Sample repositories · not connected' : 'Connect GitHub Repository'}
               </h3>
               <form onSubmit={handleConnectRepo}>
                 <input id="repo-name-input" type="text" placeholder="octocat/Hello-World" value={newRepoFullName} onChange={e => setNewRepoFullName(e.target.value)}
                   style={{ width: '100%', padding: '9px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', marginBottom: 14 }} />
-                <button id="submit-connect-repo-btn" type="submit" disabled={loading} className="btn btn-primary"><ShieldCheck size={16} /> Connect & Scan</button>
+                <button id="submit-connect-repo-btn" type="submit" disabled={loading} className="btn btn-primary"><ShieldCheck size={16} /> {DEMO_MODE ? 'Select listed sample' : 'Connect & Scan'}</button>
               </form>
+              {DEMO_MODE && <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginTop: 10 }}>Samples are placeholders only; this form never verifies or connects to GitHub in demo mode.</p>}
               <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {repos.map(r => (
                   <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8 }}>
                     <div>
                       <strong>{r.full_name}</strong>
-                      <div className="mono" style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>{r.latest_commit_sha ? r.latest_commit_sha.slice(0, 10) : 'HEAD'}</div>
+                      <div className="mono" style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>{DEMO_MODE ? `Owner: ${r.owner} · Branch: ${r.default_branch} · Languages: ${(r.languages || [r.language]).join(', ')}` : (r.latest_commit_sha ? r.latest_commit_sha.slice(0, 10) : 'HEAD')}</div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <button
@@ -1175,7 +1473,7 @@ Responsibilities:
                       >
                         <Download size={13} /> ZIP
                       </button>
-                      <span className="badge badge-met">Tracked</span>
+                      <span className={`badge ${DEMO_MODE ? 'badge-cyan' : 'badge-met'}`}>{DEMO_MODE ? 'Not connected' : 'Tracked'}</span>
                     </div>
                   </div>
                 ))}
@@ -1187,17 +1485,40 @@ Responsibilities:
         {page === 'evidence' && (
           <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <h2 style={{ fontSize: '1.2rem' }}>Evidence Explorer</h2>
-            {(assessmentResult?.skill_assessments || []).flatMap(skill => (skill.citations || []).map((c, i) => ({ skill, c, i }))).map(({ skill, c, i }) => (
-              <div key={`${skill.requirement_id}-${i}`} className="glass-panel" style={{ padding: 18 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
-                  <strong>{skill.requirement_title}</strong>
-                  <a href={c.github_url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-primary)', fontSize: '0.82rem' }}>{c.file_path}#L{c.start_line}-L{c.end_line}</a>
-                </div>
-                <pre className="mono" style={{ whiteSpace: 'pre-wrap', background: '#0f172a', color: '#e2e8f0', padding: 12, borderRadius: 8, fontSize: '0.8rem' }}>{c.snippet_text}</pre>
-                <div style={{ marginTop: 8, fontSize: '0.8rem', color: 'var(--text-dim)' }}>Commit {c.commit_sha?.slice(0, 10)} · validated against file content</div>
+            {DEMO_MODE && (
+              <div className="glass-panel" style={{ padding: 14, background: 'var(--status-partial-bg)', borderColor: 'var(--status-partial-border)' }}>
+                Repository: <strong>{assessmentResult?.repo_full_name}</strong>. Demo evidence is illustrative sample content, not fetched from or verified against GitHub. “Not demonstrated” means no sample excerpt is included; it does not mean the candidate lacks that skill.
               </div>
+            )}
+            {(assessmentResult?.skill_assessments || []).map(skill => (
+              <article key={skill.requirement_id} className="glass-panel" style={{ padding: 18 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+                  <strong>{skill.requirement_title}</strong>
+                  <span className={`badge ${skill.status === 'met' ? 'badge-met' : skill.status === 'partial' ? 'badge-partial' : 'badge-unmet'}`}>
+                    {skill.status === 'met' ? (DEMO_MODE ? 'Sample evidence' : 'Demonstrated') : skill.status === 'partial' ? (DEMO_MODE ? 'Limited sample' : 'Partial evidence') : (DEMO_MODE ? 'Not demonstrated in sample' : 'No evidence found')}
+                  </span>
+                </div>
+                {(skill.citations || []).length ? skill.citations.map((citation, index) => (
+                  <div key={`${citation.file_path}-${index}`} style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 10, marginTop: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+                      <strong style={{ fontSize: '0.86rem' }}>{citation.file_path}</strong>
+                      {citation.github_url && !DEMO_MODE
+                        ? <a href={citation.github_url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-primary)', fontSize: '0.82rem' }}>Lines {citation.start_line}-{citation.end_line}</a>
+                        : <span style={{ color: 'var(--text-dim)', fontSize: '0.82rem' }}>Lines {citation.start_line}-{citation.end_line}</span>}
+                    </div>
+                    <pre className="mono" style={{ whiteSpace: 'pre-wrap', background: '#0f172a', color: '#e2e8f0', padding: 12, borderRadius: 8, fontSize: '0.8rem' }}>{citation.snippet_text}</pre>
+                    <div style={{ marginTop: 8, fontSize: '0.8rem', color: 'var(--text-dim)' }}>
+                      {DEMO_MODE ? 'Illustrative code excerpt · not a real repository citation' : `Commit ${citation.commit_sha?.slice(0, 10)} · validated against file content`}
+                    </div>
+                  </div>
+                )) : (
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.86rem' }}>
+                    {DEMO_MODE ? `No sample code excerpt is provided for ${skill.requirement_title}.` : `No code citations were found for ${skill.requirement_title}.`}
+                  </p>
+                )}
+              </article>
             ))}
-            {!(assessmentResult?.skill_assessments || []).some(s => s.citations?.length) && (
+            {!assessmentResult && (
               <div className="glass-panel" style={{ padding: 32, color: 'var(--text-muted)' }}>Run a skill-gap assessment to see cited excerpts.</div>
             )}
           </div>
@@ -1327,17 +1648,19 @@ Responsibilities:
                 <div>
                   <div style={{ fontWeight: 700, fontSize: '0.95rem', color: geminiConfigured ? 'var(--status-met)' : 'var(--status-partial)', display: 'flex', alignItems: 'center', gap: 8 }}>
                     {geminiConfigured ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-                    {geminiConfigured ? "Gemini LLM Active & Connected" : "Gemini API Key Required"}
+                    {DEMO_MODE ? "Local Demo Mode · No API Key Required" : geminiConfigured ? "Gemini LLM Active & Connected" : "Gemini API Key Required"}
                   </div>
                   <div style={{ fontSize: '0.82rem', color: 'var(--text-dim)', marginTop: 4 }}>
-                    {geminiConfigured
+                    {DEMO_MODE
+                      ? "The built-in illustrative assessment is used locally; no external AI or backend service is contacted."
+                      : geminiConfigured
                       ? `Key configured (${maskedKey}). All skill assessments will be decided by Gemini model.`
                       : "Currently falling back to deterministic line-range rules until key is supplied."
                     }
                   </div>
                 </div>
                 <span className={`badge ${geminiConfigured ? 'badge-met' : 'badge-partial'}`}>
-                  {geminiConfigured ? "Live LLM Mode" : "Fallback Mode"}
+                  {DEMO_MODE ? "Local Sample Mode" : geminiConfigured ? "Live LLM Mode" : "Fallback Mode"}
                 </span>
               </div>
 
@@ -1352,9 +1675,10 @@ Responsibilities:
                       <input
                         id="gemini-api-key-input"
                         type="password"
-                        placeholder={geminiConfigured ? "Enter new key to update..." : "AIzaSy..."}
+                        placeholder={DEMO_MODE ? "Unavailable in demo mode" : geminiConfigured ? "Enter new key to update..." : "AIzaSy..."}
                         value={inputGeminiKey}
                         onChange={e => setInputGeminiKey(e.target.value)}
+                        disabled={DEMO_MODE}
                         style={{
                           width: '100%',
                           padding: '11px 14px',
@@ -1370,16 +1694,16 @@ Responsibilities:
                     <button
                       id="save-gemini-key-btn"
                       type="submit"
-                      disabled={loading || !inputGeminiKey.trim()}
+                      disabled={DEMO_MODE || loading || !inputGeminiKey.trim()}
                       className="btn btn-primary"
                     >
                       <Key size={16} /> Save & Activate Key
                     </button>
                   </div>
-                  <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginTop: 8 }}>
+                  {!DEMO_MODE && <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginTop: 8 }}>
                     You can obtain a free Gemini API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-primary)', fontWeight: 600 }}>Google AI Studio</a>.
-                  </p>
-                  <button type="button" className="btn btn-secondary" disabled={loading} onClick={async () => {
+                  </p>}
+                  <button type="button" className="btn btn-secondary" disabled={DEMO_MODE || loading} onClick={async () => {
                     setLoading(true);
                     setLlmTest(null);
                     try {
@@ -1431,7 +1755,9 @@ Responsibilities:
 
       {/* Footer */}
       <footer style={{ borderTop: '1px solid var(--border-subtle)', padding: '18px 32px', textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.82rem' }}>
-        AI Career Coach — Deterministic Evidence-Based Verification Pipeline • SQLite/PostgreSQL • FastAPI • React
+        {DEMO_MODE
+          ? 'AI Career Coach — Local illustrative demo data • No GitHub repositories scanned'
+          : 'AI Career Coach — Deterministic Evidence-Based Verification Pipeline • SQLite/PostgreSQL • FastAPI • React'}
       </footer>
     </div>
   );
